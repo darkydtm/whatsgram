@@ -14,6 +14,11 @@ type Telegram struct {
 	Client *http.Client
 }
 
+type File struct {
+	ID   string `json:"file_id"`
+	Path string `json:"file_path"`
+}
+
 func (t Telegram) call(ctx context.Context, method string, payload any) (json.RawMessage, error) {
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -91,4 +96,52 @@ func (t Telegram) SendText(ctx context.Context, groupID, threadID int64, text st
 		return 0, err
 	}
 	return message.MessageID, nil
+}
+
+func (t Telegram) SendMedia(ctx context.Context, groupID, threadID int64, mediaType, fileID, caption string) (int64, error) {
+	result, err := t.call(ctx, "send"+mediaType, map[string]any{
+		"chat_id":           groupID,
+		"message_thread_id": threadID,
+		mediaType:            fileID,
+		"caption":            caption,
+	})
+	if err != nil {
+		return 0, err
+	}
+	var message struct {
+		MessageID int64 `json:"message_id"`
+	}
+	if err := json.Unmarshal(result, &message); err != nil {
+		return 0, err
+	}
+	return message.MessageID, nil
+}
+
+func (t Telegram) GetFile(ctx context.Context, fileID string) (File, error) {
+	result, err := t.call(ctx, "getFile", map[string]string{"file_id": fileID})
+	if err != nil {
+		return File{}, err
+	}
+	var file File
+	if err := json.Unmarshal(result, &file); err != nil {
+		return File{}, err
+	}
+	return file, nil
+}
+
+func (t Telegram) DownloadFile(ctx context.Context, path string) (io.ReadCloser, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		"https://api.telegram.org/file/bot"+t.Token+"/"+path, nil)
+	if err != nil {
+		return nil, err
+	}
+	response, err := t.Client.Do(request)
+	if err != nil {
+		return nil, err
+	}
+	if response.StatusCode >= http.StatusMultipleChoices {
+		response.Body.Close()
+		return nil, fmt.Errorf("telegram file status %d", response.StatusCode)
+	}
+	return response.Body, nil
 }

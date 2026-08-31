@@ -159,13 +159,39 @@ func (s Server) whatsAppWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	digest := sha256.Sum256(body)
-	externalID := hex.EncodeToString(digest[:])
+	externalID := whatsappEventID(body)
 	if err := s.Store.PutInbox(r.Context(), "whatsapp", externalID, body); err != nil {
 		http.Error(w, "storage error", http.StatusInternalServerError)
 		return
 	}
 	w.WriteHeader(http.StatusOK)
+}
+
+func whatsappEventID(body []byte) string {
+	var event struct {
+		Entry []struct {
+			Changes []struct {
+				Value struct {
+					Messages []struct{ ID string `json:"id"` } `json:"messages"`
+					Statuses []struct{ ID string `json:"id"` } `json:"statuses"`
+				} `json:"value"`
+			} `json:"changes"`
+		} `json:"entry"`
+	}
+	if json.Unmarshal(body, &event) == nil {
+		for _, entry := range event.Entry {
+			for _, change := range entry.Changes {
+				if len(change.Value.Messages) > 0 && change.Value.Messages[0].ID != "" {
+					return change.Value.Messages[0].ID
+				}
+				if len(change.Value.Statuses) > 0 && change.Value.Statuses[0].ID != "" {
+					return change.Value.Statuses[0].ID + ":status"
+				}
+			}
+		}
+	}
+	digest := sha256.Sum256(body)
+	return hex.EncodeToString(digest[:])
 }
 
 func (s Server) telegramWebhook(w http.ResponseWriter, r *http.Request) {

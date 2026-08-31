@@ -276,6 +276,19 @@ func (s *Store) SetMuted(ctx context.Context, chatID int64, muted bool) error {
 	return err
 }
 
+func (s *Store) SetMessageStatus(ctx context.Context, providerID, status string) error {
+	_, err := s.DB.ExecContext(ctx, `UPDATE messages SET status = $1 WHERE provider_message_id = $2`, status, providerID)
+	return err
+}
+
+func (s *Store) CreateMedia(ctx context.Context, chatID int64, provider, fileID, mimeType, caption string) error {
+	_, err := s.DB.ExecContext(ctx, `
+		INSERT INTO media_objects(chat_id, provider, provider_file_id, mime_type, caption)
+		VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT(provider, provider_file_id) DO NOTHING`, chatID, provider, fileID, mimeType, caption)
+	return err
+}
+
 func (s *Store) GetDelivery(ctx context.Context, id int64) (Delivery, error) {
 	var delivery Delivery
 	err := s.DB.QueryRowContext(ctx, `

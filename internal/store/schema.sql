@@ -15,7 +15,14 @@ CREATE TABLE IF NOT EXISTS topic_links (
 CREATE TABLE IF NOT EXISTS messages (
  id BIGSERIAL PRIMARY KEY, chat_id BIGINT NOT NULL REFERENCES chats(id), direction TEXT NOT NULL,
  provider_message_id TEXT UNIQUE, telegram_message_id BIGINT, body TEXT NOT NULL DEFAULT '',
+ status TEXT NOT NULL DEFAULT 'received',
  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'received';
+CREATE TABLE IF NOT EXISTS media_objects (
+ id BIGSERIAL PRIMARY KEY, chat_id BIGINT REFERENCES chats(id), provider TEXT NOT NULL,
+ provider_file_id TEXT NOT NULL, mime_type TEXT, caption TEXT NOT NULL DEFAULT '',
+ created_at TIMESTAMPTZ NOT NULL DEFAULT now(), UNIQUE(provider, provider_file_id)
 );
 CREATE TABLE IF NOT EXISTS outbox_events (
  id BIGSERIAL PRIMARY KEY, provider TEXT NOT NULL, chat_id BIGINT REFERENCES chats(id),
