@@ -39,11 +39,12 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	if err := whatsapp.Start(ctx); err != nil {
-		_ = whatsapp.Close()
-		log.Fatal(err)
-	}
 	defer whatsapp.Close()
+	go func() {
+		if err := whatsapp.Start(ctx); err != nil && ctx.Err() == nil {
+			log.Printf("WhatsApp startup: %v", err)
+		}
+	}()
 	telegram := provider.Telegram{Token: cfg.TelegramBotToken, Client: client}
 
 	go (worker.Worker{

@@ -25,12 +25,15 @@ type Worker struct {
 }
 
 type whatsappEvent struct {
-	From   string `json:"from"`
-	Name   string `json:"name"`
-	ID     string `json:"id"`
-	Type   string `json:"type"`
-	Body   string `json:"body"`
-	Status string `json:"status"`
+	From     string `json:"from"`
+	Name     string `json:"name"`
+	ID       string `json:"id"`
+	Type     string `json:"type"`
+	Body     string `json:"body"`
+	Status   string `json:"status"`
+	MediaID  string `json:"media_id"`
+	Mimetype string `json:"mimetype"`
+	Caption  string `json:"caption"`
 }
 
 type telegramEvent struct {
@@ -109,6 +112,11 @@ func (w Worker) handleWhatsApp(ctx context.Context, payload []byte) error {
 	chatID, err := w.Store.UpsertChat(ctx, event.From, name)
 	if err != nil {
 		return err
+	}
+	if event.MediaID != "" {
+		if err := w.Store.CreateMedia(ctx, chatID, "whatsapp", event.MediaID, event.Mimetype, event.Caption); err != nil {
+			return err
+		}
 	}
 	inserted, err := w.Store.AddMessage(ctx, chatID, "inbound", event.ID, event.Body)
 	if err != nil || !inserted {

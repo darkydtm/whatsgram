@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -41,7 +42,7 @@ func NewWhatsApp(ctx context.Context, databaseURL string, inbox *store.Store) (W
 			}
 			payload, err := jsonMessage(event)
 			if err == nil {
-				err = inbox.PutInbox(context.Background(), "whatsapp", string(event.Info.ID), payload)
+				err = inbox.PutInbox(ctx, "whatsapp", string(event.Info.ID), payload)
 			}
 			if err != nil {
 				log.Printf("whatsapp event: %v", err)
@@ -49,7 +50,7 @@ func NewWhatsApp(ctx context.Context, databaseURL string, inbox *store.Store) (W
 		case *events.Receipt:
 			for _, id := range event.MessageIDs {
 				payload := []byte(fmt.Sprintf(`{"id":%q,"status":%q}`, id, event.Type))
-				if err := inbox.PutInbox(context.Background(), "whatsapp", string(id)+":status", payload); err != nil {
+				if err := inbox.PutInbox(ctx, "whatsapp", string(id)+":status", payload); err != nil {
 					log.Printf("whatsapp receipt: %v", err)
 				}
 			}
@@ -74,18 +75,18 @@ func (w WhatsApp) Start(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		if err := w.Client.ConnectContext(ctx); err != nil {
-			return err
-		}
-		for item := range qr {
-			if item.Event == "error" {
-				return item.Error
+		go func() {
+			for item := range qr {
+				if item.Event == "error" {
+					log.Printf("WhatsApp pairing failed: %v", item.Error)
+					continue
+				}
+				if item.Code != "" {
+					log.Printf("WhatsApp QR: %s", item.Code)
+				}
 			}
-			if item.Code != "" {
-				log.Printf("WhatsApp QR: %s", item.Code)
-			}
-		}
-		return nil
+		}()
+		return w.Client.ConnectContext(ctx)
 	}
 	return w.Client.ConnectContext(ctx)
 }
@@ -102,7 +103,7 @@ func (w WhatsApp) Close() error {
 
 func parseJID(value string) (types.JID, error) {
 	jid, err := types.ParseJID(strings.TrimSpace(value))
-	if err != nil || jid.IsEmpty() || jid.User == "" || (jid.Server != types.DefaultUserServer && jid.Server != types.GroupServer) {
+	if err != nil || jid.IsEmpty() || jid.User == "" || (jid.Server != types.DefaultUserServer && jid.Server != types.HiddenUserServer && jid.Server != types.GroupServer) {
 		if err == nil {
 			err = fmt.Errorf("empty JID")
 		}
@@ -161,5 +162,29 @@ func jsonMessage(event *events.Message) ([]byte, error) {
 	if body == "" {
 		body = event.Message.GetExtendedTextMessage().GetText()
 	}
-	return []byte(fmt.Sprintf(`{"from":%q,"name":%q,"id":%q,"type":%q,"body":%q}`, event.Info.Chat.String(), event.Info.PushName, event.Info.ID, event.Info.MediaType, body)), nil
+	return json.Marshal(struct {
+		From    string `json:"from"`
+		Name    string `json:"name"`
+		ID      string `json:"id"`
+		Type    string `json:"type"`
+		Body    string `json:"body"`
+		MediaID string `json:"media_id,omitempty"`
+		Caption string `json:"caption,omitempty"`
+	}{event.Info.Chat.String(), event.Info.PushName, string(event.Info.ID), event.Info.MediaType, body, string(event.Info.ID), mediaCaption(event.Message)})
+}
+
+func mediaCaption(message *waE2E.Message) string {
+	if message == nil {
+		return ""
+	}
+	if message.GetImageMessage() != nil {
+		return message.GetImageMessage().GetCaption()
+	}
+	if message.GetDocumentMessage() != nil {
+		return message.GetDocumentMessage().GetCaption()
+	}
+	if message.GetVideoMessage() != nil {
+		return message.GetVideoMessage().GetCaption()
+	}
+	return ""
 }
