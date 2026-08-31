@@ -27,6 +27,7 @@ type Worker struct {
 type whatsappEvent struct {
 	From     string `json:"from"`
 	Name     string `json:"name"`
+	ChatName string `json:"chat_name"`
 	ID       string `json:"id"`
 	Type     string `json:"type"`
 	Body     string `json:"body"`
@@ -36,10 +37,14 @@ type whatsappEvent struct {
 	Caption  string `json:"caption"`
 	Edited   bool   `json:"edited"`
 	Deleted  bool   `json:"deleted"`
+	TargetID string `json:"target_id"`
+	Action   string `json:"action"`
+	Reaction string `json:"reaction"`
 }
 
 type telegramEvent struct {
 	Message *struct {
+		MessageID       int64  `json:"message_id"`
 		MessageThreadID int64  `json:"message_thread_id"`
 		Text            string `json:"text"`
 		Caption         string `json:"caption"`
@@ -59,6 +64,11 @@ type telegramEvent struct {
 			FileID string `json:"file_id"`
 		} `json:"voice"`
 	} `json:"message"`
+	EditedMessage *struct {
+		MessageThreadID int64  `json:"message_thread_id"`
+		MessageID       int64  `json:"message_id"`
+		Text            string `json:"text"`
+	} `json:"edited_message"`
 }
 
 func (w Worker) Run(ctx context.Context) {
@@ -107,7 +117,25 @@ func (w Worker) handleWhatsApp(ctx context.Context, payload []byte) error {
 	if event.Status != "" {
 		return w.Store.SetMessageStatus(ctx, event.ID, event.Status)
 	}
+	if event.Edited || event.Deleted {
+		if event.TargetID == "" {
+			event.TargetID = event.ID
+		}
+		message, err := w.Store.MessageByProviderID(ctx, event.TargetID)
+		if err != nil {
+			return err
+		}
+		if message.TelegramMessageID == 0 {
+			return nil
+		}
+		return w.Store.CreateOutbox(ctx, "telegram", &message.ChatID, map[string]any{
+			"action": map[string]any{"type": map[bool]string{true: "delete", false: "edit"}[event.Deleted], "message_id": message.TelegramMessageID, "body": event.Body},
+		})
+	}
 	name := event.Name
+	if event.ChatName != "" {
+		name = event.ChatName
+	}
 	if name == "" {
 		name = event.From
 	}
@@ -117,6 +145,32 @@ func (w Worker) handleWhatsApp(ctx context.Context, payload []byte) error {
 	chatID, err := w.Store.UpsertChat(ctx, event.From, name)
 	if err != nil {
 		return err
+	}
+	if event.Action == "edit" || event.Action == "delete" {
+		message, lookupErr := w.Store.MessageByProviderID(ctx, event.TargetID)
+		if lookupErr != nil {
+			return lookupErr
+		}
+		if message.TelegramMessageID == 0 {
+			return nil
+		}
+		body := event.Body
+		if event.Action == "delete" {
+			body = "[deleted]"
+		}
+		return w.Store.CreateOutbox(ctx, "telegram", &message.ChatID, map[string]any{
+			"action": map[string]any{"type": event.Action, "message_id": message.TelegramMessageID, "body": body},
+		})
+	}
+	if event.Action == "reaction" {
+		threadID, threadErr := w.Store.TopicForChat(ctx, chatID)
+		if threadErr != nil {
+			return threadErr
+		}
+		return w.Store.CreateOutbox(ctx, "telegram", &chatID, map[string]any{
+			"thread_id": threadID,
+			"body":      fmt.Sprintf("%s reacted %q", name, event.Reaction),
+		})
 	}
 	if event.MediaID != "" {
 		if err := w.Store.CreateMedia(ctx, chatID, "whatsapp", event.MediaID, event.Mimetype, event.Caption); err != nil {
@@ -162,7 +216,21 @@ func (w Worker) handleTelegram(ctx context.Context, payload []byte) error {
 		return err
 	}
 	if event.Message == nil {
-		return nil
+		if event.EditedMessage == nil {
+			return nil
+		}
+		message, err := w.Store.MessageByTelegramID(ctx, event.EditedMessage.MessageID)
+		if err != nil {
+			return err
+		}
+		recipient, err := w.Store.ChatTarget(ctx, message.ChatID)
+		if err != nil {
+			return err
+		}
+		if err := w.WhatsApp.EditText(ctx, recipient, message.ProviderMessageID, event.EditedMessage.Text); err != nil {
+			return err
+		}
+		return w.Store.UpdateMessageBody(ctx, message.ProviderMessageID, event.EditedMessage.Text)
 	}
 	chatID, err := w.Store.ResolveTopic(ctx, w.GroupID, event.Message.MessageThreadID)
 	if strings.TrimSpace(event.Message.Text) != "" && strings.HasPrefix(event.Message.Text, "/") {
@@ -270,7 +338,7 @@ func (w Worker) handleSystemCommand(ctx context.Context, command string) error {
 	var text string
 	switch parts[0] {
 	case "/help":
-		text = "Commands: /chats /status /help"
+		text = "Commands: /chats /status /sync /help"
 	case "/status":
 		text = "Bridge is online"
 	case "/chats":
@@ -287,6 +355,24 @@ func (w Worker) handleSystemCommand(ctx context.Context, command string) error {
 			lines = append(lines, fmt.Sprintf("%d - %s", chat.ID, chat.DisplayName))
 		}
 		text = strings.Join(lines, "\n")
+	case "/sync":
+		chats, err := w.Store.ListChats(ctx)
+		if err != nil {
+			return err
+		}
+		requested := 0
+		for _, chat := range chats {
+			last, lastErr := w.Store.LastMessage(ctx, chat.ID)
+			if lastErr != nil {
+				continue
+			}
+			if err := w.WhatsApp.RequestHistory(ctx, chat.ProviderChatID, last.ProviderMessageID, 50); err != nil {
+				log.Printf("history sync %s: %v", chat.ProviderChatID, err)
+				continue
+			}
+			requested++
+		}
+		text = fmt.Sprintf("History sync requested for %d chats", requested)
 	default:
 		text = "Unknown command. Use /help"
 	}
@@ -305,6 +391,7 @@ func (w Worker) reply(ctx context.Context, chatID int64, text string) error {
 }
 
 func telegramMedia(message *struct {
+	MessageID       int64  `json:"message_id"`
 	MessageThreadID int64  `json:"message_thread_id"`
 	Text            string `json:"text"`
 	Caption         string `json:"caption"`
@@ -365,6 +452,11 @@ func (w Worker) processOutbox(ctx context.Context) {
 		ProviderMessageID string `json:"provider_message_id"`
 		MediaType         string `json:"media_type"`
 		MediaID           string `json:"media_id"`
+		Action            *struct {
+			Type      string `json:"type"`
+			MessageID int64  `json:"message_id"`
+			Body      string `json:"body"`
+		} `json:"action"`
 	}
 	if err := json.Unmarshal(job.Payload, &payload); err != nil {
 		_ = w.Store.FailOutbox(ctx, job.ID, job.Attempts+1, err)
@@ -381,20 +473,42 @@ func (w Worker) processOutbox(ctx context.Context) {
 				content, err = w.Telegram.DownloadFile(ctx, file.Path)
 				if err == nil {
 					defer content.Close()
-					err = w.WhatsApp.SendMedia(ctx, payload.To, payload.MediaType, content, payload.Body)
+					var providerID string
+					providerID, err = w.WhatsApp.SendMedia(ctx, payload.To, payload.MediaType, content, payload.Body)
+					if err == nil && job.ChatID.Valid {
+						err = w.Store.AddOutboundMessage(ctx, job.ChatID.Int64, providerID, payload.Body)
+					}
 				}
 			}
 		} else {
-			err = w.WhatsApp.SendText(ctx, payload.To, payload.Body)
+			var providerID string
+			providerID, err = w.WhatsApp.SendText(ctx, payload.To, payload.Body)
+			if err == nil && job.ChatID.Valid {
+				err = w.Store.AddOutboundMessage(ctx, job.ChatID.Int64, providerID, payload.Body)
+			}
 		}
 		if err != nil {
 			log.Printf("send WhatsApp message to %s: %v", payload.To, err)
 		}
 	} else if job.Provider == "telegram" {
-		var telegramID int64
-		telegramID, err = w.Telegram.SendText(ctx, w.GroupID, payload.ThreadID, payload.Body)
-		if err == nil && payload.ProviderMessageID != "" {
-			err = w.Store.SetTelegramMessageID(ctx, payload.ProviderMessageID, telegramID)
+		if payload.Action != nil {
+			switch payload.Action.Type {
+			case "edit":
+				err = w.Telegram.EditText(ctx, w.GroupID, payload.Action.MessageID, payload.Action.Body)
+			case "delete":
+				err = w.Telegram.DeleteMessage(ctx, w.GroupID, payload.Action.MessageID)
+			default:
+				err = errors.New("unsupported Telegram action")
+			}
+			if err != nil {
+				log.Printf("telegram action %s failed: %v", payload.Action.Type, err)
+			}
+		} else {
+			var telegramID int64
+			telegramID, err = w.Telegram.SendText(ctx, w.GroupID, payload.ThreadID, payload.Body)
+			if err == nil && payload.ProviderMessageID != "" {
+				err = w.Store.SetTelegramMessageID(ctx, payload.ProviderMessageID, telegramID)
+			}
 		}
 	} else {
 		err = errors.New("unsupported outbox provider")

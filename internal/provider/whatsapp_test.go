@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	waCommon "go.mau.fi/whatsmeow/proto/waCommon"
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
@@ -61,5 +62,15 @@ func TestJSONMessageKeepsParsedMessageWithoutRawMessage(t *testing.T) {
 	}
 	if got.Name != "Alice" || got.Body != "hello" {
 		t.Fatalf("payload = %+v", got)
+	}
+}
+
+func TestMessageAction(t *testing.T) {
+	key := &waCommon.MessageKey{ID: proto.String("target")}
+	action, target, reaction := messageAction(&events.Message{Message: &waE2E.Message{
+		ReactionMessage: &waE2E.ReactionMessage{Key: key, Text: proto.String("like")},
+	}})
+	if action != "reaction" || target != "target" || reaction != "like" {
+		t.Fatalf("reaction action = %q %q %q", action, target, reaction)
 	}
 }

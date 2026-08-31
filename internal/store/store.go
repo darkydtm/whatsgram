@@ -46,6 +46,7 @@ type Message struct {
 	Direction         string    `json:"direction"`
 	ProviderMessageID string    `json:"provider_message_id"`
 	Body              string    `json:"body"`
+	TelegramMessageID int64     `json:"telegram_message_id"`
 	CreatedAt         time.Time `json:"created_at"`
 }
 
@@ -232,10 +233,51 @@ func (s *Store) SetTelegramMessageID(ctx context.Context, providerID string, tel
 	return err
 }
 
+func (s *Store) MessageByTelegramID(ctx context.Context, telegramID int64) (Message, error) {
+	var message Message
+	err := s.DB.QueryRowContext(ctx, `
+		SELECT id, chat_id, direction, COALESCE(provider_message_id, ''), body, telegram_message_id, created_at
+		FROM messages WHERE telegram_message_id = $1`, telegramID).Scan(
+		&message.ID, &message.ChatID, &message.Direction, &message.ProviderMessageID, &message.Body, &message.TelegramMessageID, &message.CreatedAt)
+	return message, err
+}
+
+func (s *Store) MessageByProviderID(ctx context.Context, providerID string) (Message, error) {
+	var message Message
+	err := s.DB.QueryRowContext(ctx, `
+		SELECT id, chat_id, direction, COALESCE(provider_message_id, ''), body, telegram_message_id, created_at
+		FROM messages WHERE provider_message_id = $1`, providerID).Scan(
+		&message.ID, &message.ChatID, &message.Direction, &message.ProviderMessageID, &message.Body, &message.TelegramMessageID, &message.CreatedAt)
+	return message, err
+}
+
+func (s *Store) UpdateMessageBody(ctx context.Context, providerID, body string) error {
+	_, err := s.DB.ExecContext(ctx, `UPDATE messages SET body = $1 WHERE provider_message_id = $2`, body, providerID)
+	return err
+}
+
+func (s *Store) AddOutboundMessage(ctx context.Context, chatID int64, providerID, body string) error {
+	_, err := s.DB.ExecContext(ctx, `
+		INSERT INTO messages(chat_id, direction, provider_message_id, body)
+		VALUES ($1, 'outbound', $2, $3)
+		ON CONFLICT(provider_message_id) DO NOTHING`, chatID, providerID, body)
+	return err
+}
+
 func (s *Store) ChatTarget(ctx context.Context, chatID int64) (string, error) {
 	var target string
 	err := s.DB.QueryRowContext(ctx, `SELECT provider_chat_id FROM chats WHERE id = $1`, chatID).Scan(&target)
 	return target, err
+}
+
+func (s *Store) LastMessage(ctx context.Context, chatID int64) (Message, error) {
+	var message Message
+	err := s.DB.QueryRowContext(ctx, `
+		SELECT id, chat_id, direction, COALESCE(provider_message_id, ''), body, telegram_message_id, created_at
+		FROM messages WHERE chat_id = $1 AND provider_message_id IS NOT NULL
+		ORDER BY id DESC LIMIT 1`, chatID).Scan(
+		&message.ID, &message.ChatID, &message.Direction, &message.ProviderMessageID, &message.Body, &message.TelegramMessageID, &message.CreatedAt)
+	return message, err
 }
 
 func (s *Store) ListChats(ctx context.Context) ([]Chat, error) {
@@ -262,7 +304,7 @@ func (s *Store) ListChats(ctx context.Context) ([]Chat, error) {
 
 func (s *Store) ListMessages(ctx context.Context, chatID int64) ([]Message, error) {
 	rows, err := s.DB.QueryContext(ctx, `
-		SELECT id, chat_id, direction, COALESCE(provider_message_id, ''), body, created_at
+		SELECT id, chat_id, direction, COALESCE(provider_message_id, ''), body, telegram_message_id, created_at
 		FROM messages WHERE chat_id = $1 ORDER BY id`, chatID)
 	if err != nil {
 		return nil, err
@@ -272,7 +314,7 @@ func (s *Store) ListMessages(ctx context.Context, chatID int64) ([]Message, erro
 	var messages []Message
 	for rows.Next() {
 		var message Message
-		if err := rows.Scan(&message.ID, &message.ChatID, &message.Direction, &message.ProviderMessageID, &message.Body, &message.CreatedAt); err != nil {
+		if err := rows.Scan(&message.ID, &message.ChatID, &message.Direction, &message.ProviderMessageID, &message.Body, &message.TelegramMessageID, &message.CreatedAt); err != nil {
 			return nil, err
 		}
 		messages = append(messages, message)

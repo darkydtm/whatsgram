@@ -147,7 +147,11 @@ func (s Server) telegramWebhook(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
-	if update.Message == nil || !s.authorized(update.Message) {
+	message := update.Message
+	if message == nil {
+		message = update.EditedMessage
+	}
+	if message == nil || !s.authorized(message) {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
@@ -166,8 +170,9 @@ func (s Server) authorized(message *telegramMessage) bool {
 }
 
 type telegramUpdate struct {
-	UpdateID int64            `json:"update_id"`
-	Message  *telegramMessage `json:"message"`
+	UpdateID      int64            `json:"update_id"`
+	Message       *telegramMessage `json:"message"`
+	EditedMessage *telegramMessage `json:"edited_message"`
 }
 
 type telegramMessage struct {
@@ -178,6 +183,7 @@ type telegramMessage struct {
 		ID int64 `json:"id"`
 	} `json:"from"`
 	MessageThreadID int64  `json:"message_thread_id"`
+	MessageID       int64  `json:"message_id"`
 	Text            string `json:"text"`
 	ReplyToMessage  *struct {
 		MessageID int64 `json:"message_id"`

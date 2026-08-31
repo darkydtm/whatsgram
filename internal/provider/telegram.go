@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sync"
+	"time"
 )
 
 type Telegram struct {
@@ -14,12 +16,30 @@ type Telegram struct {
 	Client *http.Client
 }
 
+var telegramRateLimit = struct {
+	sync.Mutex
+	next time.Time
+}{}
+
 type File struct {
 	ID   string `json:"file_id"`
 	Path string `json:"file_path"`
 }
 
 func (t Telegram) call(ctx context.Context, method string, payload any) (json.RawMessage, error) {
+	telegramRateLimit.Lock()
+	defer telegramRateLimit.Unlock()
+	if wait := time.Until(telegramRateLimit.next); wait > 0 {
+		timer := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
+	}
+	telegramRateLimit.next = time.Now().Add(1100 * time.Millisecond)
+
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err
@@ -43,19 +63,28 @@ func (t Telegram) call(ctx context.Context, method string, payload any) (json.Ra
 	if err != nil {
 		return nil, err
 	}
-	if response.StatusCode >= http.StatusMultipleChoices {
-		return nil, fmt.Errorf("telegram status %d", response.StatusCode)
-	}
-
 	var result struct {
 		OK          bool            `json:"ok"`
 		Result      json.RawMessage `json:"result"`
 		Description string          `json:"description"`
+		Parameters  struct {
+			RetryAfter int `json:"retry_after"`
+		} `json:"parameters"`
 	}
 	if err := json.Unmarshal(data, &result); err != nil {
+		if response.StatusCode >= http.StatusMultipleChoices {
+			return nil, fmt.Errorf("telegram status %d", response.StatusCode)
+		}
 		return nil, err
 	}
+	if response.StatusCode >= http.StatusMultipleChoices && result.OK {
+		return nil, fmt.Errorf("telegram status %d", response.StatusCode)
+	}
 	if !result.OK {
+		if result.Parameters.RetryAfter > 0 {
+			telegramRateLimit.next = time.Now().Add(time.Duration(result.Parameters.RetryAfter) * time.Second)
+			return nil, fmt.Errorf("telegram: %s (retry after %ds)", result.Description, result.Parameters.RetryAfter)
+		}
 		return nil, fmt.Errorf("telegram: %s", result.Description)
 	}
 	return result.Result, nil
