@@ -23,4 +23,9 @@ func TestMessageBody(t *testing.T) {
 	if got := messageBody(&waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{Text: proto.String("hello")}}); got != "hello" {
 		t.Fatalf("extended message body = %q, want hello", got)
 	}
+	if got := messageBody(&waE2E.Message{DeviceSentMessage: &waE2E.DeviceSentMessage{
+		Message: &waE2E.Message{Conversation: proto.String("hello")},
+	}}); got != "hello" {
+		t.Fatalf("nested message body = %q, want hello", got)
+	}
 }

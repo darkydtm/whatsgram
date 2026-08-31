@@ -207,6 +207,18 @@ func messageBody(message *waE2E.Message) string {
 	if message == nil {
 		return ""
 	}
+	for _, nested := range []*waE2E.Message{
+		message.GetDeviceSentMessage().GetMessage(),
+		message.GetEphemeralMessage().GetMessage(),
+		message.GetViewOnceMessage().GetMessage(),
+		message.GetViewOnceMessageV2().GetMessage(),
+		message.GetViewOnceMessageV2Extension().GetMessage(),
+		message.GetEditedMessage().GetMessage(),
+	} {
+		if body := messageBody(nested); body != "" {
+			return body
+		}
+	}
 	if body := message.GetConversation(); body != "" {
 		return body
 	}
