@@ -1,139 +1,165 @@
 package provider
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
-	"mime/multipart"
-	"net/http"
-	"os"
+	"log"
 	"strings"
+
+	"github.com/darky/whatsgram/internal/store"
+	"go.mau.fi/whatsmeow"
+	"go.mau.fi/whatsmeow/proto/waE2E"
+	"go.mau.fi/whatsmeow/store/sqlstore"
+	"go.mau.fi/whatsmeow/types"
+	"go.mau.fi/whatsmeow/types/events"
+	waLog "go.mau.fi/whatsmeow/util/log"
+	"google.golang.org/protobuf/proto"
 )
 
 type WhatsApp struct {
-	Token   string
-	PhoneID string
-	Version string
-	Client  *http.Client
+	Client    *whatsmeow.Client
+	Container *sqlstore.Container
 }
 
-func (w WhatsApp) send(ctx context.Context, payload any) error {
-	data, err := json.Marshal(payload)
+func NewWhatsApp(ctx context.Context, databaseURL string, inbox *store.Store) (WhatsApp, error) {
+	container, err := sqlstore.New(ctx, "pgx", databaseURL, waLog.Stdout("whatsmeow", "WARN", false))
 	if err != nil {
-		return err
+		return WhatsApp{}, err
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		fmt.Sprintf("https://graph.facebook.com/%s/%s/messages", w.Version, w.PhoneID),
-		bytes.NewReader(data))
+	device, err := container.GetFirstDevice(ctx)
 	if err != nil {
-		return err
+		_ = container.Close()
+		return WhatsApp{}, err
 	}
-	request.Header.Set("Authorization", "Bearer "+w.Token)
-	request.Header.Set("Content-Type", "application/json")
+	client := whatsmeow.NewClient(device, waLog.Stdout("whatsmeow", "WARN", false))
+	client.AddEventHandler(func(evt any) {
+		switch event := evt.(type) {
+		case *events.Message:
+			if event.Info.IsFromMe {
+				return
+			}
+			payload, err := jsonMessage(event)
+			if err == nil {
+				err = inbox.PutInbox(context.Background(), "whatsapp", string(event.Info.ID), payload)
+			}
+			if err != nil {
+				log.Printf("whatsapp event: %v", err)
+			}
+		case *events.Receipt:
+			for _, id := range event.MessageIDs {
+				payload := []byte(fmt.Sprintf(`{"id":%q,"status":%q}`, id, event.Type))
+				if err := inbox.PutInbox(context.Background(), "whatsapp", string(id)+":status", payload); err != nil {
+					log.Printf("whatsapp receipt: %v", err)
+				}
+			}
+		case *events.QR:
+			for _, code := range event.Codes {
+				log.Printf("WhatsApp QR: %s", code)
+			}
+		case *events.Connected:
+			log.Printf("WhatsApp connected as %s", device.ID)
+		case *events.LoggedOut:
+			log.Printf("WhatsApp logged out: %s", event.Reason)
+		case *events.Disconnected:
+			log.Printf("WhatsApp disconnected")
+		}
+	})
+	return WhatsApp{Client: client, Container: container}, nil
+}
 
-	response, err := w.Client.Do(request)
-	if err != nil {
-		return err
+func (w WhatsApp) Start(ctx context.Context) error {
+	if w.Client.Store.ID == nil {
+		qr, err := w.Client.GetQRChannel(ctx)
+		if err != nil {
+			return err
+		}
+		if err := w.Client.ConnectContext(ctx); err != nil {
+			return err
+		}
+		for item := range qr {
+			if item.Event == "error" {
+				return item.Error
+			}
+			if item.Code != "" {
+				log.Printf("WhatsApp QR: %s", item.Code)
+			}
+		}
+		return nil
 	}
-	defer response.Body.Close()
-	if response.StatusCode >= http.StatusMultipleChoices {
-		detail, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
-		return fmt.Errorf("whatsapp status %d: %s", response.StatusCode, detail)
+	return w.Client.ConnectContext(ctx)
+}
+
+func (w WhatsApp) Close() error {
+	if w.Client != nil {
+		w.Client.Disconnect()
+	}
+	if w.Container != nil {
+		return w.Container.Close()
 	}
 	return nil
 }
 
-func (w WhatsApp) SendText(ctx context.Context, recipient, body string) error {
-	return w.send(ctx, map[string]any{
-		"messaging_product": "whatsapp",
-		"to":                recipient,
-		"type":              "text",
-		"text":              map[string]string{"body": body},
-	})
+func parseJID(value string) (types.JID, error) {
+	jid, err := types.ParseJID(strings.TrimSpace(value))
+	if err != nil || jid.IsEmpty() || jid.User == "" || (jid.Server != types.DefaultUserServer && jid.Server != types.GroupServer) {
+		if err == nil {
+			err = fmt.Errorf("empty JID")
+		}
+		return types.EmptyJID, fmt.Errorf("invalid WhatsApp JID %q: %w", value, err)
+	}
+	return jid, nil
 }
 
-func (w WhatsApp) SendMedia(ctx context.Context, recipient, mediaType, mediaID, caption string) error {
-	if !supportedMediaType(mediaType) {
+func (w WhatsApp) SendText(ctx context.Context, recipient, body string) error {
+	jid, err := parseJID(recipient)
+	if err != nil {
+		return err
+	}
+	_, err = w.Client.SendMessage(ctx, jid, &waE2E.Message{Conversation: proto.String(body)})
+	return err
+}
+
+func (w WhatsApp) SendMedia(ctx context.Context, recipient, mediaType string, content io.Reader, caption string) error {
+	jid, err := parseJID(recipient)
+	if err != nil {
+		return err
+	}
+	appInfo, ok := map[string]whatsmeow.MediaType{
+		"image": whatsmeow.MediaImage, "document": whatsmeow.MediaDocument,
+		"video": whatsmeow.MediaVideo, "audio": whatsmeow.MediaAudio,
+	}[strings.ToLower(mediaType)]
+	if !ok {
 		return fmt.Errorf("unsupported WhatsApp media type %q", mediaType)
 	}
-	return w.send(ctx, map[string]any{
-		"messaging_product": "whatsapp",
-		"to":                recipient,
-		"type":              mediaType,
-		mediaType: map[string]string{
-			"id":      mediaID,
-			"caption": caption,
-		},
-	})
-}
-
-func (w WhatsApp) UploadMedia(ctx context.Context, mediaType string, content io.Reader) (string, error) {
-	if !supportedMediaType(mediaType) {
-		return "", fmt.Errorf("unsupported WhatsApp media type %q", mediaType)
-	}
-	file, err := os.CreateTemp("", "whatsgram-media-*")
+	data, err := io.ReadAll(content)
 	if err != nil {
-		return "", err
+		return err
 	}
-	name := file.Name()
-	defer os.Remove(name)
-	defer file.Close()
-	if _, err := io.Copy(file, content); err != nil {
-		return "", err
-	}
-	if _, err := file.Seek(0, io.SeekStart); err != nil {
-		return "", err
-	}
-
-	var body bytes.Buffer
-	writer := multipart.NewWriter(&body)
-	part, err := writer.CreateFormFile("file", "media")
+	upload, err := w.Client.Upload(ctx, data, appInfo)
 	if err != nil {
-		return "", err
+		return err
 	}
-	if _, err := io.Copy(part, file); err != nil {
-		return "", err
-	}
-	_ = writer.WriteField("messaging_product", "whatsapp")
-	_ = writer.WriteField("type", mediaType)
-	if err := writer.Close(); err != nil {
-		return "", err
-	}
-
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		fmt.Sprintf("https://graph.facebook.com/%s/%s/media", w.Version, w.PhoneID), &body)
-	if err != nil {
-		return "", err
-	}
-	request.Header.Set("Authorization", "Bearer "+w.Token)
-	request.Header.Set("Content-Type", writer.FormDataContentType())
-	response, err := w.Client.Do(request)
-	if err != nil {
-		return "", err
-	}
-	defer response.Body.Close()
-	if response.StatusCode >= http.StatusMultipleChoices {
-		return "", fmt.Errorf("whatsapp upload status %d", response.StatusCode)
-	}
-	var result struct {
-		ID string `json:"id"`
-	}
-	if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
-		return "", err
-	}
-	if result.ID == "" {
-		return "", fmt.Errorf("whatsapp upload returned no media id")
-	}
-	return result.ID, nil
-}
-
-func supportedMediaType(mediaType string) bool {
+	message := &waE2E.Message{}
 	switch strings.ToLower(mediaType) {
-	case "image", "document", "video", "audio":
-		return true
-	default:
-		return false
+	case "image":
+		message.ImageMessage = &waE2E.ImageMessage{URL: &upload.URL, DirectPath: &upload.DirectPath, MediaKey: upload.MediaKey, FileSHA256: upload.FileSHA256, FileEncSHA256: upload.FileEncSHA256, FileLength: &upload.FileLength, Caption: proto.String(caption)}
+	case "document":
+		message.DocumentMessage = &waE2E.DocumentMessage{URL: &upload.URL, DirectPath: &upload.DirectPath, MediaKey: upload.MediaKey, FileSHA256: upload.FileSHA256, FileEncSHA256: upload.FileEncSHA256, FileLength: &upload.FileLength, Caption: proto.String(caption)}
+	case "video":
+		message.VideoMessage = &waE2E.VideoMessage{URL: &upload.URL, DirectPath: &upload.DirectPath, MediaKey: upload.MediaKey, FileSHA256: upload.FileSHA256, FileEncSHA256: upload.FileEncSHA256, FileLength: &upload.FileLength, Caption: proto.String(caption)}
+	case "audio":
+		message.AudioMessage = &waE2E.AudioMessage{URL: &upload.URL, DirectPath: &upload.DirectPath, MediaKey: upload.MediaKey, FileSHA256: upload.FileSHA256, FileEncSHA256: upload.FileEncSHA256, FileLength: &upload.FileLength}
 	}
+	_, err = w.Client.SendMessage(ctx, jid, message)
+	return err
+}
+
+func jsonMessage(event *events.Message) ([]byte, error) {
+	event.UnwrapRaw()
+	body := event.Message.GetConversation()
+	if body == "" {
+		body = event.Message.GetExtendedTextMessage().GetText()
+	}
+	return []byte(fmt.Sprintf(`{"from":%q,"name":%q,"id":%q,"type":%q,"body":%q}`, event.Info.Chat.String(), event.Info.PushName, event.Info.ID, event.Info.MediaType, body)), nil
 }

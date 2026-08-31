@@ -1,10 +1,7 @@
 package httpapi
 
 import (
-	"crypto/hmac"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -19,7 +16,6 @@ import (
 type Server struct {
 	Config   config.Config
 	Store    *store.Store
-	WhatsApp provider.WhatsApp
 	Telegram provider.Telegram
 }
 
@@ -27,8 +23,6 @@ func (s Server) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health/live", s.live)
 	mux.HandleFunc("GET /health/ready", s.ready)
-	mux.HandleFunc("GET /webhooks/whatsapp", s.verifyWhatsApp)
-	mux.HandleFunc("POST /webhooks/whatsapp", s.whatsAppWebhook)
 	mux.HandleFunc("POST /webhooks/telegram", s.telegramWebhook)
 	mux.HandleFunc("GET /api/chats", s.listChats)
 	mux.HandleFunc("GET /api/messages", s.listMessages)
@@ -135,84 +129,6 @@ func (s Server) ready(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
-}
-
-func (s Server) verifyWhatsApp(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Query().Get("hub.verify_token") != s.Config.WhatsAppVerifyToken {
-		http.Error(w, "forbidden", http.StatusForbidden)
-		return
-	}
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte(r.URL.Query().Get("hub.challenge")))
-}
-
-func (s Server) validSignature(body []byte, header string) bool {
-	if !strings.HasPrefix(header, "sha256=") {
-		return false
-	}
-
-	provided, err := hex.DecodeString(strings.TrimPrefix(header, "sha256="))
-	if err != nil {
-		return false
-	}
-
-	digest := hmac.New(sha256.New, []byte(s.Config.WhatsAppAppSecret))
-	_, _ = digest.Write(body)
-	return hmac.Equal(provided, digest.Sum(nil))
-}
-
-func (s Server) whatsAppWebhook(w http.ResponseWriter, r *http.Request) {
-	body, err := io.ReadAll(io.LimitReader(r.Body, 2<<20))
-	if err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
-	}
-	if !s.validSignature(body, r.Header.Get("X-Hub-Signature-256")) {
-		http.Error(w, "forbidden", http.StatusForbidden)
-		return
-	}
-	if !json.Valid(body) {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
-	}
-
-	externalID := whatsappEventID(body)
-	if err := s.Store.PutInbox(r.Context(), "whatsapp", externalID, body); err != nil {
-		http.Error(w, "storage error", http.StatusInternalServerError)
-		return
-	}
-	w.WriteHeader(http.StatusOK)
-}
-
-func whatsappEventID(body []byte) string {
-	var event struct {
-		Entry []struct {
-			Changes []struct {
-				Value struct {
-					Messages []struct {
-						ID string `json:"id"`
-					} `json:"messages"`
-					Statuses []struct {
-						ID string `json:"id"`
-					} `json:"statuses"`
-				} `json:"value"`
-			} `json:"changes"`
-		} `json:"entry"`
-	}
-	if json.Unmarshal(body, &event) == nil {
-		for _, entry := range event.Entry {
-			for _, change := range entry.Changes {
-				if len(change.Value.Messages) > 0 && change.Value.Messages[0].ID != "" {
-					return change.Value.Messages[0].ID
-				}
-				if len(change.Value.Statuses) > 0 && change.Value.Statuses[0].ID != "" {
-					return change.Value.Statuses[0].ID + ":status"
-				}
-			}
-		}
-	}
-	digest := sha256.Sum256(body)
-	return hex.EncodeToString(digest[:])
 }
 
 func (s Server) telegramWebhook(w http.ResponseWriter, r *http.Request) {

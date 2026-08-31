@@ -25,48 +25,12 @@ type Worker struct {
 }
 
 type whatsappEvent struct {
-	Entry []struct {
-		Changes []struct {
-			Value struct {
-				Contacts []struct {
-					WaID    string `json:"wa_id"`
-					Profile struct {
-						Name string `json:"name"`
-					} `json:"profile"`
-				} `json:"contacts"`
-				Messages []struct {
-					ID   string `json:"id"`
-					From string `json:"from"`
-					Text struct {
-						Body string `json:"body"`
-					} `json:"text"`
-					Type  string `json:"type"`
-					Image *struct {
-						ID      string `json:"id"`
-						Caption string `json:"caption"`
-					} `json:"image"`
-					Document *struct {
-						ID      string `json:"id"`
-						Caption string `json:"caption"`
-					} `json:"document"`
-					Video *struct {
-						ID      string `json:"id"`
-						Caption string `json:"caption"`
-					} `json:"video"`
-					Audio *struct {
-						ID string `json:"id"`
-					} `json:"audio"`
-					Voice *struct {
-						ID string `json:"id"`
-					} `json:"voice"`
-				} `json:"messages"`
-				Statuses []struct {
-					ID     string `json:"id"`
-					Status string `json:"status"`
-				} `json:"statuses"`
-			} `json:"value"`
-		} `json:"changes"`
-	} `json:"entry"`
+	From   string `json:"from"`
+	Name   string `json:"name"`
+	ID     string `json:"id"`
+	Type   string `json:"type"`
+	Body   string `json:"body"`
+	Status string `json:"status"`
 }
 
 type telegramEvent struct {
@@ -132,80 +96,43 @@ func (w Worker) handleWhatsApp(ctx context.Context, payload []byte) error {
 	if err := json.Unmarshal(payload, &event); err != nil {
 		return err
 	}
-	for _, entry := range event.Entry {
-		for _, change := range entry.Changes {
-			for _, status := range change.Value.Statuses {
-				if err := w.Store.SetMessageStatus(ctx, status.ID, status.Status); err != nil {
-					return err
-				}
-			}
-			for _, message := range change.Value.Messages {
-				name := message.From
-				if len(change.Value.Contacts) > 0 && change.Value.Contacts[0].Profile.Name != "" {
-					name = change.Value.Contacts[0].Profile.Name
-				}
-				chatID, err := w.Store.UpsertChat(ctx, message.From, name)
-				if err != nil {
-					return err
-				}
-				body := message.Text.Body
-				mediaID, mediaCaption := "", ""
-				if message.Image != nil {
-					mediaID, mediaCaption = message.Image.ID, message.Image.Caption
-				}
-				if message.Document != nil {
-					mediaID, mediaCaption = message.Document.ID, message.Document.Caption
-				}
-				if message.Video != nil {
-					mediaID, mediaCaption = message.Video.ID, message.Video.Caption
-				}
-				if message.Audio != nil {
-					mediaID = message.Audio.ID
-				}
-				if message.Voice != nil {
-					mediaID = message.Voice.ID
-				}
-				if body == "" {
-					body = mediaCaption
-				}
-				inserted, err := w.Store.AddMessage(ctx, chatID, "inbound", message.ID, body)
-				if err != nil {
-					return err
-				}
-				if !inserted {
-					continue
-				}
-				if muted, err := w.Store.IsMuted(ctx, chatID); err != nil {
-					return err
-				} else if muted {
-					continue
-				}
-				if mediaID != "" {
-					if err := w.Store.CreateMedia(ctx, chatID, "whatsapp", mediaID, message.Type, mediaCaption); err != nil {
-						return err
-					}
-				}
-				threadID, err := w.Store.TopicForChat(ctx, chatID)
-				if errors.Is(err, sql.ErrNoRows) {
-					threadID, err = w.Telegram.CreateTopic(ctx, w.GroupID, safeTopicName(name))
-					if err == nil {
-						err = w.Store.LinkTopic(ctx, chatID, w.GroupID, threadID)
-					}
-				}
-				if err != nil {
-					return err
-				}
-				text := fmt.Sprintf("%s:\n%s", name, body)
-				if err := w.Store.CreateOutbox(ctx, "telegram", &chatID, map[string]any{
-					"thread_id": threadID,
-					"body":      text,
-				}); err != nil {
-					return err
-				}
-			}
+	if event.ID == "" {
+		return nil
+	}
+	if event.Status != "" {
+		return w.Store.SetMessageStatus(ctx, event.ID, event.Status)
+	}
+	name := event.Name
+	if name == "" {
+		name = event.From
+	}
+	chatID, err := w.Store.UpsertChat(ctx, event.From, name)
+	if err != nil {
+		return err
+	}
+	inserted, err := w.Store.AddMessage(ctx, chatID, "inbound", event.ID, event.Body)
+	if err != nil || !inserted {
+		return err
+	}
+	if muted, err := w.Store.IsMuted(ctx, chatID); err != nil {
+		return err
+	} else if muted {
+		return nil
+	}
+	threadID, err := w.Store.TopicForChat(ctx, chatID)
+	if errors.Is(err, sql.ErrNoRows) {
+		threadID, err = w.Telegram.CreateTopic(ctx, w.GroupID, safeTopicName(name))
+		if err == nil {
+			err = w.Store.LinkTopic(ctx, chatID, w.GroupID, threadID)
 		}
 	}
-	return nil
+	if err != nil {
+		return err
+	}
+	return w.Store.CreateOutbox(ctx, "telegram", &chatID, map[string]any{
+		"thread_id": threadID,
+		"body":      fmt.Sprintf("%s:\n%s", name, event.Body),
+	})
 }
 
 func (w Worker) handleTelegram(ctx context.Context, payload []byte) error {
@@ -431,11 +358,7 @@ func (w Worker) processOutbox(ctx context.Context) {
 				content, err = w.Telegram.DownloadFile(ctx, file.Path)
 				if err == nil {
 					defer content.Close()
-					var mediaID string
-					mediaID, err = w.WhatsApp.UploadMedia(ctx, payload.MediaType, content)
-					if err == nil {
-						err = w.WhatsApp.SendMedia(ctx, payload.To, payload.MediaType, mediaID, payload.Body)
-					}
+					err = w.WhatsApp.SendMedia(ctx, payload.To, payload.MediaType, content, payload.Body)
 				}
 			}
 		} else {

@@ -35,12 +35,15 @@ func main() {
 	}
 
 	client := http.DefaultClient
-	whatsapp := provider.WhatsApp{
-		Token:   cfg.WhatsAppAccessToken,
-		PhoneID: cfg.WhatsAppPhoneNumberID,
-		Version: cfg.WhatsAppAPIVersion,
-		Client:  client,
+	whatsapp, err := provider.NewWhatsApp(ctx, cfg.DatabaseURL, st)
+	if err != nil {
+		log.Fatal(err)
 	}
+	if err := whatsapp.Start(ctx); err != nil {
+		_ = whatsapp.Close()
+		log.Fatal(err)
+	}
+	defer whatsapp.Close()
 	telegram := provider.Telegram{Token: cfg.TelegramBotToken, Client: client}
 
 	go (worker.Worker{
@@ -54,7 +57,6 @@ func main() {
 	server := &http.Server{Addr: cfg.HTTPAddr, Handler: (httpapi.Server{
 		Config:   cfg,
 		Store:    st,
-		WhatsApp: whatsapp,
 		Telegram: telegram,
 	}).Routes()}
 

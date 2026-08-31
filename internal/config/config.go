@@ -11,12 +11,6 @@ type Config struct {
 	DatabaseURL string
 	HTTPAddr    string
 
-	WhatsAppVerifyToken   string
-	WhatsAppAppSecret     string
-	WhatsAppAccessToken   string
-	WhatsAppPhoneNumberID string
-	WhatsAppAPIVersion    string
-
 	TelegramBotToken       string
 	TelegramWebhookSecret  string
 	TelegramGroupID        int64
@@ -37,22 +31,6 @@ func Load() (Config, error) {
 	var err error
 	if config.DatabaseURL, err = get("DATABASE_URL"); err != nil {
 		return Config{}, err
-	}
-	if config.WhatsAppVerifyToken, err = get("WHATSAPP_VERIFY_TOKEN"); err != nil {
-		return Config{}, err
-	}
-	if config.WhatsAppAppSecret, err = get("WHATSAPP_APP_SECRET"); err != nil {
-		return Config{}, err
-	}
-	if config.WhatsAppAccessToken, err = get("WHATSAPP_ACCESS_TOKEN"); err != nil {
-		return Config{}, err
-	}
-	if config.WhatsAppPhoneNumberID, err = get("WHATSAPP_PHONE_NUMBER_ID"); err != nil {
-		return Config{}, err
-	}
-	config.WhatsAppAPIVersion = os.Getenv("WHATSAPP_API_VERSION")
-	if config.WhatsAppAPIVersion == "" {
-		config.WhatsAppAPIVersion = "v21.0"
 	}
 	if config.TelegramBotToken, err = get("TELEGRAM_BOT_TOKEN"); err != nil {
 		return Config{}, err
