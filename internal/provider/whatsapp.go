@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"os"
 	"strings"
 
 	"github.com/darky/whatsgram/internal/store"
+	"github.com/mdp/qrterminal/v3"
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/store/sqlstore"
@@ -82,7 +84,8 @@ func (w WhatsApp) Start(ctx context.Context) error {
 					continue
 				}
 				if item.Code != "" {
-					log.Printf("WhatsApp QR: %s", item.Code)
+					log.Println("WhatsApp QR:")
+					qrterminal.GenerateHalfBlock(item.Code, qrterminal.L, os.Stdout)
 				}
 			}
 		}()
