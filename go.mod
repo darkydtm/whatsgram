@@ -3,7 +3,7 @@ module github.com/darky/whatsgram
 go 1.26.0
 
 require (
-	github.com/jackc/pgx/v5 v5.7.1
+	github.com/jackc/pgx/v5 v5.9.2
 	go.mau.fi/whatsmeow v0.0.0-20260828224850-0fadda796019
 	google.golang.org/protobuf v1.36.12
 )
