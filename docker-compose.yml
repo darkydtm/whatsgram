@@ -14,11 +14,7 @@ services:
       retries: 10
 
   app:
-    image: ${IMAGE:-whatsgram:local}
-    build:
-      context: .
-      platforms:
-        - linux/amd64
+    image: ghcr.io/darkydtm/whatsgram:${IMAGE_TAG:-latest}
     env_file:
       - path: .env
         required: false
