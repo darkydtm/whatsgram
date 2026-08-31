@@ -26,7 +26,7 @@ type WhatsApp struct {
 }
 
 func NewWhatsApp(ctx context.Context, databaseURL string, inbox *store.Store) (WhatsApp, error) {
-	container, err := sqlstore.New(ctx, "pgx", databaseURL, waLog.Stdout("whatsmeow", "WARN", false))
+	container, err := sqlstore.New(ctx, "pgx", databaseURL, waLog.Stdout("whatsmeow", "ERROR", false))
 	if err != nil {
 		return WhatsApp{}, err
 	}
@@ -35,7 +35,7 @@ func NewWhatsApp(ctx context.Context, databaseURL string, inbox *store.Store) (W
 		_ = container.Close()
 		return WhatsApp{}, err
 	}
-	client := whatsmeow.NewClient(device, waLog.Stdout("whatsmeow", "WARN", false))
+	client := whatsmeow.NewClient(device, waLog.Stdout("whatsmeow", "ERROR", false))
 	client.AddEventHandler(func(evt any) {
 		switch event := evt.(type) {
 		case *events.Message:
@@ -55,10 +55,6 @@ func NewWhatsApp(ctx context.Context, databaseURL string, inbox *store.Store) (W
 				if err := inbox.PutInbox(ctx, "whatsapp", string(id)+":status", payload); err != nil {
 					log.Printf("whatsapp receipt: %v", err)
 				}
-			}
-		case *events.QR:
-			for _, code := range event.Codes {
-				log.Printf("WhatsApp QR: %s", code)
 			}
 		case *events.Connected:
 			log.Printf("WhatsApp connected as %s", device.ID)
