@@ -43,7 +43,7 @@ func NewWhatsApp(ctx context.Context, databaseURL string, inbox *store.Store) (W
 				return
 			}
 			payload, err := jsonMessage(event)
-			if err == nil {
+			if err == nil && payload != nil {
 				err = inbox.PutInbox(ctx, "whatsapp", string(event.Info.ID), payload)
 			}
 			if err != nil {
@@ -158,6 +158,12 @@ func (w WhatsApp) SendMedia(ctx context.Context, recipient, mediaType string, co
 func jsonMessage(event *events.Message) ([]byte, error) {
 	event.UnwrapRaw()
 	body := messageBody(event.Message)
+	if strings.TrimSpace(body) == "" {
+		body = mediaCaption(event.Message)
+	}
+	if strings.TrimSpace(body) == "" && event.Info.MediaType == "" {
+		return nil, nil
+	}
 	return json.Marshal(struct {
 		From    string `json:"from"`
 		Name    string `json:"name"`
@@ -176,7 +182,19 @@ func messageBody(message *waE2E.Message) string {
 	if body := message.GetConversation(); body != "" {
 		return body
 	}
-	return message.GetExtendedTextMessage().GetText()
+	if body := message.GetExtendedTextMessage().GetText(); body != "" {
+		return body
+	}
+	if body := message.GetListResponseMessage().GetTitle(); body != "" {
+		return body
+	}
+	if body := message.GetButtonsResponseMessage().GetSelectedDisplayText(); body != "" {
+		return body
+	}
+	if body := message.GetTemplateButtonReplyMessage().GetSelectedDisplayText(); body != "" {
+		return body
+	}
+	return message.GetPollCreationMessage().GetName()
 }
 
 func mediaCaption(message *waE2E.Message) string {
