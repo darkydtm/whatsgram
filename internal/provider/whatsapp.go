@@ -42,12 +42,40 @@ func NewWhatsApp(ctx context.Context, databaseURL string, inbox *store.Store) (W
 			if event.Info.IsFromMe {
 				return
 			}
+			log.Printf("WhatsApp message: chat=%s id=%s type=%s ephemeral=%t", event.Info.Chat, event.Info.ID, event.Info.MediaType, event.IsEphemeral)
 			payload, err := jsonMessage(event)
 			if err == nil {
 				err = inbox.PutInbox(ctx, "whatsapp", string(event.Info.ID), payload)
 			}
 			if err != nil {
 				log.Printf("whatsapp event: %v", err)
+			}
+		case *events.HistorySync:
+			if event.Data == nil {
+				return
+			}
+			for _, conversation := range event.Data.GetConversations() {
+				chat, err := parseJID(conversation.GetID())
+				if err != nil {
+					log.Printf("whatsapp history chat: %v", err)
+					continue
+				}
+				for _, item := range conversation.GetMessages() {
+					if item.GetMessage() == nil {
+						continue
+					}
+					historyEvent, err := client.ParseWebMessage(chat, item.GetMessage())
+					if err != nil || historyEvent.Info.IsFromMe {
+						continue
+					}
+					payload, err := jsonMessage(historyEvent)
+					if err == nil {
+						err = inbox.PutInbox(ctx, "whatsapp", string(historyEvent.Info.ID), payload)
+					}
+					if err != nil {
+						log.Printf("whatsapp history event: %v", err)
+					}
+				}
 			}
 		case *events.Receipt:
 			for _, id := range event.MessageIDs {

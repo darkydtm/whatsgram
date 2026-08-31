@@ -117,6 +117,20 @@ func (t Telegram) SendMedia(ctx context.Context, groupID, threadID int64, mediaT
 	return message.MessageID, nil
 }
 
+func (t Telegram) EditText(ctx context.Context, groupID, messageID int64, text string) error {
+	_, err := t.call(ctx, "editMessageText", map[string]any{
+		"chat_id": groupID, "message_id": messageID, "text": text,
+	})
+	return err
+}
+
+func (t Telegram) DeleteMessage(ctx context.Context, groupID, messageID int64) error {
+	_, err := t.call(ctx, "deleteMessage", map[string]any{
+		"chat_id": groupID, "message_id": messageID,
+	})
+	return err
+}
+
 func (t Telegram) GetFile(ctx context.Context, fileID string) (File, error) {
 	result, err := t.call(ctx, "getFile", map[string]string{"file_id": fileID})
 	if err != nil {

@@ -227,6 +227,11 @@ func (s *Store) AddMessage(ctx context.Context, chatID int64, direction, provide
 	return count == 1, err
 }
 
+func (s *Store) SetTelegramMessageID(ctx context.Context, providerID string, telegramID int64) error {
+	_, err := s.DB.ExecContext(ctx, `UPDATE messages SET telegram_message_id = $1 WHERE provider_message_id = $2`, telegramID, providerID)
+	return err
+}
+
 func (s *Store) ChatTarget(ctx context.Context, chatID int64) (string, error) {
 	var target string
 	err := s.DB.QueryRowContext(ctx, `SELECT provider_chat_id FROM chats WHERE id = $1`, chatID).Scan(&target)

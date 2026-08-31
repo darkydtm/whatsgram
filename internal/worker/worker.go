@@ -34,6 +34,8 @@ type whatsappEvent struct {
 	MediaID  string `json:"media_id"`
 	Mimetype string `json:"mimetype"`
 	Caption  string `json:"caption"`
+	Edited   bool   `json:"edited"`
+	Deleted  bool   `json:"deleted"`
 }
 
 type telegramEvent struct {
@@ -141,8 +143,9 @@ func (w Worker) handleWhatsApp(ctx context.Context, payload []byte) error {
 		return err
 	}
 	return w.Store.CreateOutbox(ctx, "telegram", &chatID, map[string]any{
-		"thread_id": threadID,
-		"body":      fmt.Sprintf("%s:\n%s", name, event.Body),
+		"thread_id":           threadID,
+		"body":                fmt.Sprintf("%s:\n%s", name, event.Body),
+		"provider_message_id": event.ID,
 	})
 }
 
@@ -349,11 +352,12 @@ func (w Worker) processOutbox(ctx context.Context) {
 		return
 	}
 	var payload struct {
-		To        string `json:"to"`
-		Body      string `json:"body"`
-		ThreadID  int64  `json:"thread_id"`
-		MediaType string `json:"media_type"`
-		MediaID   string `json:"media_id"`
+		To                string `json:"to"`
+		Body              string `json:"body"`
+		ThreadID          int64  `json:"thread_id"`
+		ProviderMessageID string `json:"provider_message_id"`
+		MediaType         string `json:"media_type"`
+		MediaID           string `json:"media_id"`
 	}
 	if err := json.Unmarshal(job.Payload, &payload); err != nil {
 		_ = w.Store.FailOutbox(ctx, job.ID, job.Attempts+1, err)
@@ -376,7 +380,11 @@ func (w Worker) processOutbox(ctx context.Context) {
 			err = w.WhatsApp.SendText(ctx, payload.To, payload.Body)
 		}
 	} else if job.Provider == "telegram" {
-		_, err = w.Telegram.SendText(ctx, w.GroupID, payload.ThreadID, payload.Body)
+		var telegramID int64
+		telegramID, err = w.Telegram.SendText(ctx, w.GroupID, payload.ThreadID, payload.Body)
+		if err == nil && payload.ProviderMessageID != "" {
+			err = w.Store.SetTelegramMessageID(ctx, payload.ProviderMessageID, telegramID)
+		}
 	} else {
 		err = errors.New("unsupported outbox provider")
 	}
