@@ -3,6 +3,7 @@ package httpapi
 import (
 	"crypto/hmac"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"io"
@@ -29,7 +30,82 @@ func (s Server) Routes() http.Handler {
 	mux.HandleFunc("GET /webhooks/whatsapp", s.verifyWhatsApp)
 	mux.HandleFunc("POST /webhooks/whatsapp", s.whatsAppWebhook)
 	mux.HandleFunc("POST /webhooks/telegram", s.telegramWebhook)
+	mux.HandleFunc("GET /api/chats", s.listChats)
+	mux.HandleFunc("GET /api/messages", s.listMessages)
+	mux.HandleFunc("POST /api/commands", s.createCommand)
+	mux.HandleFunc("GET /api/deliveries/{id}", s.getDelivery)
 	return mux
+}
+
+func (s Server) listChats(w http.ResponseWriter, r *http.Request) {
+	chats, err := s.Store.ListChats(r.Context())
+	if err != nil {
+		http.Error(w, "storage error", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, chats)
+}
+
+func (s Server) listMessages(w http.ResponseWriter, r *http.Request) {
+	chatID, err := strconv.ParseInt(r.URL.Query().Get("chat_id"), 10, 64)
+	if err != nil || chatID <= 0 {
+		http.Error(w, "chat_id is required", http.StatusBadRequest)
+		return
+	}
+	messages, err := s.Store.ListMessages(r.Context(), chatID)
+	if err != nil {
+		http.Error(w, "storage error", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, messages)
+}
+
+type commandRequest struct {
+	ChatID  int64  `json:"chat_id"`
+	Body    string `json:"body"`
+	Command string `json:"command"`
+}
+
+func (s Server) createCommand(w http.ResponseWriter, r *http.Request) {
+	var request commandRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 64<<10)).Decode(&request); err != nil || request.ChatID <= 0 || strings.TrimSpace(request.Body) == "" {
+		http.Error(w, "chat_id and body are required", http.StatusBadRequest)
+		return
+	}
+	recipient, err := s.Store.ChatTarget(r.Context(), request.ChatID)
+	if err != nil {
+		http.Error(w, "chat not found", http.StatusNotFound)
+		return
+	}
+	delivery := map[string]string{"to": recipient, "body": request.Body}
+	if err := s.Store.CreateOutbox(r.Context(), "whatsapp", &request.ChatID, delivery); err != nil {
+		http.Error(w, "storage error", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusAccepted)
+}
+
+func (s Server) getDelivery(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id <= 0 {
+		http.Error(w, "invalid delivery id", http.StatusBadRequest)
+		return
+	}
+	delivery, err := s.Store.GetDelivery(r.Context(), id)
+	if err == sql.ErrNoRows {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		http.Error(w, "storage error", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, delivery)
+}
+
+func writeJSON(w http.ResponseWriter, value any) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(value)
 }
 
 func (s Server) live(w http.ResponseWriter, _ *http.Request) {

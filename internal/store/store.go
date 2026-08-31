@@ -26,6 +26,39 @@ type Outbox struct {
 	Attempts int
 }
 
+type Inbox struct {
+	ID       int64
+	Provider string
+	Payload  []byte
+}
+
+type Chat struct {
+	ID             int64  `json:"id"`
+	ProviderChatID string `json:"provider_chat_id"`
+	DisplayName    string `json:"display_name"`
+	Muted          bool   `json:"muted"`
+	ThreadID       int64  `json:"telegram_thread_id"`
+}
+
+type Message struct {
+	ID                int64     `json:"id"`
+	ChatID            int64     `json:"chat_id"`
+	Direction         string    `json:"direction"`
+	ProviderMessageID string    `json:"provider_message_id"`
+	Body              string    `json:"body"`
+	CreatedAt         time.Time `json:"created_at"`
+}
+
+type Delivery struct {
+	ID        int64     `json:"id"`
+	Provider  string    `json:"provider"`
+	ChatID    *int64    `json:"chat_id,omitempty"`
+	Status    string    `json:"status"`
+	Attempts  int       `json:"attempts"`
+	LastError string    `json:"last_error,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 func Open(ctx context.Context, dsn string) (*Store, error) {
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
@@ -57,6 +90,47 @@ func (s *Store) PutInbox(ctx context.Context, provider, externalID string, paylo
 		VALUES ($1, $2, $3)
 		ON CONFLICT DO NOTHING`, provider, externalID, payload)
 	return err
+}
+
+func (s *Store) ClaimInbox(ctx context.Context) (Inbox, error) {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return Inbox{}, err
+	}
+	defer tx.Rollback()
+
+	var event Inbox
+	err = tx.QueryRowContext(ctx, `
+		SELECT id, provider, payload
+		FROM inbox_events
+		WHERE status = 'pending'
+		ORDER BY id
+		FOR UPDATE SKIP LOCKED
+		LIMIT 1`).Scan(&event.ID, &event.Provider, &event.Payload)
+	if err != nil {
+		return event, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE inbox_events SET status = 'processing' WHERE id = $1`, event.ID); err != nil {
+		return event, err
+	}
+	return event, tx.Commit()
+}
+
+func (s *Store) CompleteInbox(ctx context.Context, id int64) error {
+	_, err := s.DB.ExecContext(ctx, `UPDATE inbox_events SET status = 'processed', processed_at = now() WHERE id = $1`, id)
+	return err
+}
+
+func (s *Store) ResetInbox(ctx context.Context, id int64, cause error) error {
+	_ = cause
+	_, err := s.DB.ExecContext(ctx, `UPDATE inbox_events SET status = 'pending' WHERE id = $1`, id)
+	return err
+}
+
+func (s *Store) TopicForChat(ctx context.Context, chatID int64) (int64, error) {
+	var threadID int64
+	err := s.DB.QueryRowContext(ctx, `SELECT telegram_thread_id FROM topic_links WHERE chat_id = $1`, chatID).Scan(&threadID)
+	return threadID, err
 }
 
 func (s *Store) ClaimOutbox(ctx context.Context) (Outbox, error) {
@@ -147,6 +221,70 @@ func (s *Store) AddMessage(ctx context.Context, chatID int64, direction, provide
 		VALUES ($1, $2, $3, $4)
 		ON CONFLICT(provider_message_id) DO NOTHING`, chatID, direction, providerID, body)
 	return err
+}
+
+func (s *Store) ChatTarget(ctx context.Context, chatID int64) (string, error) {
+	var target string
+	err := s.DB.QueryRowContext(ctx, `SELECT provider_chat_id FROM chats WHERE id = $1`, chatID).Scan(&target)
+	return target, err
+}
+
+func (s *Store) ListChats(ctx context.Context) ([]Chat, error) {
+	rows, err := s.DB.QueryContext(ctx, `
+		SELECT c.id, c.provider_chat_id, c.display_name, c.muted,
+		       COALESCE(t.telegram_thread_id, 0)
+		FROM chats c LEFT JOIN topic_links t ON t.chat_id = c.id
+		ORDER BY c.display_name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var chats []Chat
+	for rows.Next() {
+		var chat Chat
+		if err := rows.Scan(&chat.ID, &chat.ProviderChatID, &chat.DisplayName, &chat.Muted, &chat.ThreadID); err != nil {
+			return nil, err
+		}
+		chats = append(chats, chat)
+	}
+	return chats, rows.Err()
+}
+
+func (s *Store) ListMessages(ctx context.Context, chatID int64) ([]Message, error) {
+	rows, err := s.DB.QueryContext(ctx, `
+		SELECT id, chat_id, direction, COALESCE(provider_message_id, ''), body, created_at
+		FROM messages WHERE chat_id = $1 ORDER BY id`, chatID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var messages []Message
+	for rows.Next() {
+		var message Message
+		if err := rows.Scan(&message.ID, &message.ChatID, &message.Direction, &message.ProviderMessageID, &message.Body, &message.CreatedAt); err != nil {
+			return nil, err
+		}
+		messages = append(messages, message)
+	}
+	return messages, rows.Err()
+}
+
+func (s *Store) SetMuted(ctx context.Context, chatID int64, muted bool) error {
+	_, err := s.DB.ExecContext(ctx, `UPDATE chats SET muted = $1 WHERE id = $2`, muted, chatID)
+	return err
+}
+
+func (s *Store) GetDelivery(ctx context.Context, id int64) (Delivery, error) {
+	var delivery Delivery
+	err := s.DB.QueryRowContext(ctx, `
+		SELECT id, provider, chat_id, status, attempts, COALESCE(last_error, ''), created_at
+		FROM outbox_events WHERE id = $1`, id).Scan(
+		&delivery.ID, &delivery.Provider, &delivery.ChatID, &delivery.Status,
+		&delivery.Attempts, &delivery.LastError, &delivery.CreatedAt,
+	)
+	return delivery, err
 }
 
 func RetryDelay(attempts int) time.Duration {
