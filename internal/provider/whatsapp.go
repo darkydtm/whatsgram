@@ -117,7 +117,9 @@ func (w WhatsApp) UploadMedia(ctx context.Context, mediaType string, content io.
 	if response.StatusCode >= http.StatusMultipleChoices {
 		return "", fmt.Errorf("whatsapp upload status %d", response.StatusCode)
 	}
-	var result struct { ID string `json:"id"` }
+	var result struct {
+		ID string `json:"id"`
+	}
 	if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
 		return "", err
 	}
@@ -127,10 +129,9 @@ func (w WhatsApp) UploadMedia(ctx context.Context, mediaType string, content io.
 	return result.ID, nil
 }
 
-
 func supportedMediaType(mediaType string) bool {
 	switch strings.ToLower(mediaType) {
-	case "image", "document", "video", "audio" :
+	case "image", "document", "video", "audio":
 		return true
 	default:
 		return false

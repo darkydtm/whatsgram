@@ -44,10 +44,10 @@ func main() {
 	telegram := provider.Telegram{Token: cfg.TelegramBotToken, Client: client}
 
 	go (worker.Worker{
-		Store:    st,
-		WhatsApp: whatsapp,
-		Telegram: telegram,
-		GroupID:  cfg.TelegramGroupID,
+		Store:          st,
+		WhatsApp:       whatsapp,
+		Telegram:       telegram,
+		GroupID:        cfg.TelegramGroupID,
 		SystemThreadID: cfg.TelegramSystemThreadID,
 	}).Run(ctx)
 

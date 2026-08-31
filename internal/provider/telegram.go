@@ -102,8 +102,8 @@ func (t Telegram) SendMedia(ctx context.Context, groupID, threadID int64, mediaT
 	result, err := t.call(ctx, "send"+mediaType, map[string]any{
 		"chat_id":           groupID,
 		"message_thread_id": threadID,
-		mediaType:            fileID,
-		"caption":            caption,
+		mediaType:           fileID,
+		"caption":           caption,
 	})
 	if err != nil {
 		return 0, err

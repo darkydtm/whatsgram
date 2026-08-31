@@ -14,7 +14,11 @@ services:
       retries: 10
 
   app:
-    build: .
+    image: ${IMAGE:-whatsgram:local}
+    build:
+      context: .
+      platforms:
+        - linux/amd64
     env_file:
       - path: .env
         required: false

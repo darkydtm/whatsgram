@@ -17,10 +17,10 @@ import (
 )
 
 type Worker struct {
-	Store    *store.Store
-	WhatsApp provider.WhatsApp
-	Telegram provider.Telegram
-	GroupID  int64
+	Store          *store.Store
+	WhatsApp       provider.WhatsApp
+	Telegram       provider.Telegram
+	GroupID        int64
 	SystemThreadID int64
 }
 
@@ -29,7 +29,7 @@ type whatsappEvent struct {
 		Changes []struct {
 			Value struct {
 				Contacts []struct {
-					WaID string `json:"wa_id"`
+					WaID    string `json:"wa_id"`
 					Profile struct {
 						Name string `json:"name"`
 					} `json:"profile"`
@@ -40,12 +40,25 @@ type whatsappEvent struct {
 					Text struct {
 						Body string `json:"body"`
 					} `json:"text"`
-					Type   string `json:"type"`
-					Image  *struct { ID string `json:"id"`; Caption string `json:"caption"` } `json:"image"`
-					Document *struct { ID string `json:"id"`; Caption string `json:"caption"` } `json:"document"`
-					Video *struct { ID string `json:"id"`; Caption string `json:"caption"` } `json:"video"`
-					Audio *struct { ID string `json:"id"` } `json:"audio"`
-					Voice *struct { ID string `json:"id"` } `json:"voice"`
+					Type  string `json:"type"`
+					Image *struct {
+						ID      string `json:"id"`
+						Caption string `json:"caption"`
+					} `json:"image"`
+					Document *struct {
+						ID      string `json:"id"`
+						Caption string `json:"caption"`
+					} `json:"document"`
+					Video *struct {
+						ID      string `json:"id"`
+						Caption string `json:"caption"`
+					} `json:"video"`
+					Audio *struct {
+						ID string `json:"id"`
+					} `json:"audio"`
+					Voice *struct {
+						ID string `json:"id"`
+					} `json:"voice"`
 				} `json:"messages"`
 				Statuses []struct {
 					ID     string `json:"id"`
@@ -58,14 +71,24 @@ type whatsappEvent struct {
 
 type telegramEvent struct {
 	Message *struct {
-		MessageThreadID int64 `json:"message_thread_id"`
+		MessageThreadID int64  `json:"message_thread_id"`
 		Text            string `json:"text"`
 		Caption         string `json:"caption"`
-		Photo           []struct { FileID string `json:"file_id"` } `json:"photo"`
-		Document        *struct { FileID string `json:"file_id"` } `json:"document"`
-		Video           *struct { FileID string `json:"file_id"` } `json:"video"`
-		Audio           *struct { FileID string `json:"file_id"` } `json:"audio"`
-		Voice           *struct { FileID string `json:"file_id"` } `json:"voice"`
+		Photo           []struct {
+			FileID string `json:"file_id"`
+		} `json:"photo"`
+		Document *struct {
+			FileID string `json:"file_id"`
+		} `json:"document"`
+		Video *struct {
+			FileID string `json:"file_id"`
+		} `json:"video"`
+		Audio *struct {
+			FileID string `json:"file_id"`
+		} `json:"audio"`
+		Voice *struct {
+			FileID string `json:"file_id"`
+		} `json:"voice"`
 	} `json:"message"`
 }
 
@@ -198,10 +221,14 @@ func (w Worker) handleTelegram(ctx context.Context, payload []byte) error {
 		if errors.Is(err, sql.ErrNoRows) && w.SystemThreadID == event.Message.MessageThreadID {
 			return w.handleSystemCommand(ctx, event.Message.Text)
 		}
-		if err != nil { return err }
+		if err != nil {
+			return err
+		}
 		return w.handleCommand(ctx, chatID, event.Message.Text)
 	}
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	recipient, err := w.Store.ChatTarget(ctx, chatID)
 	if err != nil {
 		return err
@@ -230,20 +257,32 @@ func (w Worker) handleCommand(ctx context.Context, chatID int64, command string)
 		return w.reply(ctx, chatID, "Bridge is online")
 	case "/chats":
 		chats, err := w.Store.ListChats(ctx)
-		if err != nil { return err }
-		if len(chats) == 0 { return w.reply(ctx, chatID, "No chats") }
+		if err != nil {
+			return err
+		}
+		if len(chats) == 0 {
+			return w.reply(ctx, chatID, "No chats")
+		}
 		var lines []string
-		for _, chat := range chats { lines = append(lines, fmt.Sprintf("%d - %s", chat.ID, chat.DisplayName)) }
+		for _, chat := range chats {
+			lines = append(lines, fmt.Sprintf("%d - %s", chat.ID, chat.DisplayName))
+		}
 		return w.reply(ctx, chatID, strings.Join(lines, "\n"))
 	case "/details":
 		target, err := w.Store.ChatTarget(ctx, chatID)
-		if err != nil { return err }
+		if err != nil {
+			return err
+		}
 		return w.reply(ctx, chatID, "WhatsApp chat: "+target)
 	case "/mute":
-		if err := w.Store.SetMuted(ctx, chatID, true); err != nil { return err }
+		if err := w.Store.SetMuted(ctx, chatID, true); err != nil {
+			return err
+		}
 		return w.reply(ctx, chatID, "Chat muted")
 	case "/unmute":
-		if err := w.Store.SetMuted(ctx, chatID, false); err != nil { return err }
+		if err := w.Store.SetMuted(ctx, chatID, false); err != nil {
+			return err
+		}
 		return w.reply(ctx, chatID, "Chat unmuted")
 	case "/retry":
 		if len(parts) != 2 {
@@ -254,14 +293,20 @@ func (w Worker) handleCommand(ctx context.Context, chatID int64, command string)
 			return w.reply(ctx, chatID, "Invalid delivery id")
 		}
 		if err := w.Store.RetryDelivery(ctx, deliveryID); err != nil {
-			if errors.Is(err, sql.ErrNoRows) { return w.reply(ctx, chatID, "Delivery is not retryable") }
+			if errors.Is(err, sql.ErrNoRows) {
+				return w.reply(ctx, chatID, "Delivery is not retryable")
+			}
 			return err
 		}
 		return w.reply(ctx, chatID, "Delivery queued for retry")
 	case "/send":
-		if len(parts) == 1 { return w.reply(ctx, chatID, "Usage: /send <text>") }
+		if len(parts) == 1 {
+			return w.reply(ctx, chatID, "Usage: /send <text>")
+		}
 		target, err := w.Store.ChatTarget(ctx, chatID)
-		if err != nil { return err }
+		if err != nil {
+			return err
+		}
 		return w.Store.CreateOutbox(ctx, "whatsapp", &chatID, map[string]string{"to": target, "body": strings.TrimSpace(strings.TrimPrefix(command, parts[0]))})
 	default:
 		return w.reply(ctx, chatID, "Unknown command. Use /help")
@@ -305,21 +350,47 @@ func (w Worker) handleSystemCommand(ctx context.Context, command string) error {
 
 func (w Worker) reply(ctx context.Context, chatID int64, text string) error {
 	threadID, err := w.Store.TopicForChat(ctx, chatID)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	return w.Store.CreateOutbox(ctx, "telegram", &chatID, map[string]any{"thread_id": threadID, "body": text})
 }
 
 func telegramMedia(message *struct {
-	MessageThreadID int64 `json:"message_thread_id"`; Text string `json:"text"`; Caption string `json:"caption"`
-	Photo []struct { FileID string `json:"file_id"` } `json:"photo"`
-	Document *struct { FileID string `json:"file_id"` } `json:"document"`
-	Video *struct { FileID string `json:"file_id"` } `json:"video"`; Audio *struct { FileID string `json:"file_id"` } `json:"audio"`; Voice *struct { FileID string `json:"file_id"` } `json:"voice"`
+	MessageThreadID int64  `json:"message_thread_id"`
+	Text            string `json:"text"`
+	Caption         string `json:"caption"`
+	Photo           []struct {
+		FileID string `json:"file_id"`
+	} `json:"photo"`
+	Document *struct {
+		FileID string `json:"file_id"`
+	} `json:"document"`
+	Video *struct {
+		FileID string `json:"file_id"`
+	} `json:"video"`
+	Audio *struct {
+		FileID string `json:"file_id"`
+	} `json:"audio"`
+	Voice *struct {
+		FileID string `json:"file_id"`
+	} `json:"voice"`
 }) (string, string) {
-	if len(message.Photo) > 0 { return "image", message.Photo[len(message.Photo)-1].FileID }
-	if message.Document != nil { return "document", message.Document.FileID }
-	if message.Video != nil { return "video", message.Video.FileID }
-	if message.Audio != nil { return "audio", message.Audio.FileID }
-	if message.Voice != nil { return "audio", message.Voice.FileID }
+	if len(message.Photo) > 0 {
+		return "image", message.Photo[len(message.Photo)-1].FileID
+	}
+	if message.Document != nil {
+		return "document", message.Document.FileID
+	}
+	if message.Video != nil {
+		return "video", message.Video.FileID
+	}
+	if message.Audio != nil {
+		return "audio", message.Audio.FileID
+	}
+	if message.Voice != nil {
+		return "audio", message.Voice.FileID
+	}
 	return "", ""
 }
 
@@ -340,11 +411,11 @@ func (w Worker) processOutbox(ctx context.Context) {
 		return
 	}
 	var payload struct {
-		To       string `json:"to"`
-		Body     string `json:"body"`
-		ThreadID int64  `json:"thread_id"`
+		To        string `json:"to"`
+		Body      string `json:"body"`
+		ThreadID  int64  `json:"thread_id"`
 		MediaType string `json:"media_type"`
-		MediaID string `json:"media_id"`
+		MediaID   string `json:"media_id"`
 	}
 	if err := json.Unmarshal(job.Payload, &payload); err != nil {
 		_ = w.Store.FailOutbox(ctx, job.ID, job.Attempts+1, err)

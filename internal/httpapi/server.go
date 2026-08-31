@@ -189,8 +189,12 @@ func whatsappEventID(body []byte) string {
 		Entry []struct {
 			Changes []struct {
 				Value struct {
-					Messages []struct{ ID string `json:"id"` } `json:"messages"`
-					Statuses []struct{ ID string `json:"id"` } `json:"statuses"`
+					Messages []struct {
+						ID string `json:"id"`
+					} `json:"messages"`
+					Statuses []struct {
+						ID string `json:"id"`
+					} `json:"statuses"`
 				} `json:"value"`
 			} `json:"changes"`
 		} `json:"entry"`
@@ -257,7 +261,7 @@ type telegramMessage struct {
 	From struct {
 		ID int64 `json:"id"`
 	} `json:"from"`
-	MessageThreadID int64 `json:"message_thread_id"`
+	MessageThreadID int64  `json:"message_thread_id"`
 	Text            string `json:"text"`
 	ReplyToMessage  *struct {
 		MessageID int64 `json:"message_id"`
