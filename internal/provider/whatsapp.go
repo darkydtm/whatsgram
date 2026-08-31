@@ -43,7 +43,7 @@ func NewWhatsApp(ctx context.Context, databaseURL string, inbox *store.Store) (W
 				return
 			}
 			payload, err := jsonMessage(event)
-			if err == nil && payload != nil {
+			if err == nil {
 				err = inbox.PutInbox(ctx, "whatsapp", string(event.Info.ID), payload)
 			}
 			if err != nil {
@@ -156,13 +156,13 @@ func (w WhatsApp) SendMedia(ctx context.Context, recipient, mediaType string, co
 }
 
 func jsonMessage(event *events.Message) ([]byte, error) {
-	event.UnwrapRaw()
+	event = event.UnwrapRaw()
 	body := messageBody(event.Message)
 	if strings.TrimSpace(body) == "" {
 		body = mediaCaption(event.Message)
 	}
-	if strings.TrimSpace(body) == "" && event.Info.MediaType == "" {
-		return nil, nil
+	if strings.TrimSpace(body) == "" {
+		body = "[WHATSAPP MESSAGE]"
 	}
 	return json.Marshal(struct {
 		From    string `json:"from"`

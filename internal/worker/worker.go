@@ -105,9 +105,6 @@ func (w Worker) handleWhatsApp(ctx context.Context, payload []byte) error {
 	if event.Status != "" {
 		return w.Store.SetMessageStatus(ctx, event.ID, event.Status)
 	}
-	if strings.TrimSpace(event.Body) == "" && strings.TrimSpace(event.Caption) == "" && event.MediaID == "" {
-		return nil
-	}
 	name := event.Name
 	if name == "" {
 		name = event.From
