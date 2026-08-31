@@ -111,6 +111,9 @@ func (w Worker) handleWhatsApp(ctx context.Context, payload []byte) error {
 	if name == "" {
 		name = event.From
 	}
+	if name == "" {
+		name = "WhatsApp"
+	}
 	chatID, err := w.Store.UpsertChat(ctx, event.From, name)
 	if err != nil {
 		return err
@@ -122,6 +125,9 @@ func (w Worker) handleWhatsApp(ctx context.Context, payload []byte) error {
 	}
 	if strings.TrimSpace(event.Body) == "" && strings.TrimSpace(event.Caption) != "" {
 		event.Body = event.Caption
+	}
+	if strings.TrimSpace(event.Body) == "" {
+		event.Body = "[WHATSAPP MESSAGE]"
 	}
 	inserted, err := w.Store.AddMessage(ctx, chatID, "inbound", event.ID, event.Body)
 	if err != nil || !inserted {
@@ -142,9 +148,10 @@ func (w Worker) handleWhatsApp(ctx context.Context, payload []byte) error {
 	if err != nil {
 		return err
 	}
+	body := fmt.Sprintf("%s:\n%s", name, event.Body)
 	return w.Store.CreateOutbox(ctx, "telegram", &chatID, map[string]any{
 		"thread_id":           threadID,
-		"body":                fmt.Sprintf("%s:\n%s", name, event.Body),
+		"body":                body,
 		"provider_message_id": event.ID,
 	})
 }
@@ -364,6 +371,7 @@ func (w Worker) processOutbox(ctx context.Context) {
 		return
 	}
 	if job.Provider == "whatsapp" {
+		log.Printf("sending WhatsApp outbox %d to=%s media=%s", job.ID, payload.To, payload.MediaType)
 		if payload.MediaType != "" {
 			file, fileErr := w.Telegram.GetFile(ctx, payload.MediaID)
 			if fileErr != nil {
@@ -379,6 +387,9 @@ func (w Worker) processOutbox(ctx context.Context) {
 		} else {
 			err = w.WhatsApp.SendText(ctx, payload.To, payload.Body)
 		}
+		if err != nil {
+			log.Printf("send WhatsApp message to %s: %v", payload.To, err)
+		}
 	} else if job.Provider == "telegram" {
 		var telegramID int64
 		telegramID, err = w.Telegram.SendText(ctx, w.GroupID, payload.ThreadID, payload.Body)
@@ -389,6 +400,7 @@ func (w Worker) processOutbox(ctx context.Context) {
 		err = errors.New("unsupported outbox provider")
 	}
 	if err != nil {
+		log.Printf("outbox %d failed: %v", job.ID, err)
 		_ = w.Store.FailOutbox(ctx, job.ID, job.Attempts+1, err)
 		return
 	}

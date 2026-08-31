@@ -139,6 +139,10 @@ func parseJID(value string) (types.JID, error) {
 	return jid, nil
 }
 
+func chatKey(jid types.JID) string {
+	return types.NewJID(jid.User, jid.Server).String()
+}
+
 func (w WhatsApp) SendText(ctx context.Context, recipient, body string) error {
 	jid, err := parseJID(recipient)
 	if err != nil {
@@ -184,13 +188,19 @@ func (w WhatsApp) SendMedia(ctx context.Context, recipient, mediaType string, co
 }
 
 func jsonMessage(event *events.Message) ([]byte, error) {
-	event = event.UnwrapRaw()
+	if event.RawMessage != nil {
+		event = event.UnwrapRaw()
+	}
 	body := messageBody(event.Message)
 	if strings.TrimSpace(body) == "" {
 		body = mediaCaption(event.Message)
 	}
 	if strings.TrimSpace(body) == "" {
 		body = "[WHATSAPP MESSAGE]"
+	}
+	name := event.Info.PushName
+	if name == "" {
+		name = event.Info.Sender.User
 	}
 	return json.Marshal(struct {
 		From    string `json:"from"`
@@ -200,7 +210,7 @@ func jsonMessage(event *events.Message) ([]byte, error) {
 		Body    string `json:"body"`
 		MediaID string `json:"media_id,omitempty"`
 		Caption string `json:"caption,omitempty"`
-	}{event.Info.Chat.String(), event.Info.PushName, string(event.Info.ID), event.Info.MediaType, body, string(event.Info.ID), mediaCaption(event.Message)})
+	}{chatKey(event.Info.Chat), name, string(event.Info.ID), event.Info.MediaType, body, string(event.Info.ID), mediaCaption(event.Message)})
 }
 
 func messageBody(message *waE2E.Message) string {

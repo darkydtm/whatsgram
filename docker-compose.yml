@@ -35,3 +35,4 @@ services:
 
 volumes:
   postgres-data:
+    name: whatsgram-postgres-data
