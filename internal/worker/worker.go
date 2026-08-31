@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"strconv"
 	"strings"
 	"time"
 
@@ -20,6 +21,7 @@ type Worker struct {
 	WhatsApp provider.WhatsApp
 	Telegram provider.Telegram
 	GroupID  int64
+	SystemThreadID int64
 }
 
 type whatsappEvent struct {
@@ -143,8 +145,17 @@ func (w Worker) handleWhatsApp(ctx context.Context, payload []byte) error {
 				if body == "" {
 					body = mediaCaption
 				}
-				if err := w.Store.AddMessage(ctx, chatID, "inbound", message.ID, body); err != nil {
+				inserted, err := w.Store.AddMessage(ctx, chatID, "inbound", message.ID, body)
+				if err != nil {
 					return err
+				}
+				if !inserted {
+					continue
+				}
+				if muted, err := w.Store.IsMuted(ctx, chatID); err != nil {
+					return err
+				} else if muted {
+					continue
 				}
 				if mediaID != "" {
 					if err := w.Store.CreateMedia(ctx, chatID, "whatsapp", mediaID, message.Type, mediaCaption); err != nil {
@@ -183,12 +194,14 @@ func (w Worker) handleTelegram(ctx context.Context, payload []byte) error {
 		return nil
 	}
 	chatID, err := w.Store.ResolveTopic(ctx, w.GroupID, event.Message.MessageThreadID)
-	if err != nil {
-		return err
-	}
 	if strings.TrimSpace(event.Message.Text) != "" && strings.HasPrefix(event.Message.Text, "/") {
+		if errors.Is(err, sql.ErrNoRows) && w.SystemThreadID == event.Message.MessageThreadID {
+			return w.handleSystemCommand(ctx, event.Message.Text)
+		}
+		if err != nil { return err }
 		return w.handleCommand(ctx, chatID, event.Message.Text)
 	}
+	if err != nil { return err }
 	recipient, err := w.Store.ChatTarget(ctx, chatID)
 	if err != nil {
 		return err
@@ -233,7 +246,18 @@ func (w Worker) handleCommand(ctx context.Context, chatID int64, command string)
 		if err := w.Store.SetMuted(ctx, chatID, false); err != nil { return err }
 		return w.reply(ctx, chatID, "Chat unmuted")
 	case "/retry":
-		return w.reply(ctx, chatID, "Retry is automatic for failed deliveries")
+		if len(parts) != 2 {
+			return w.reply(ctx, chatID, "Usage: /retry <delivery_id>")
+		}
+		deliveryID, err := strconv.ParseInt(parts[1], 10, 64)
+		if err != nil || deliveryID <= 0 {
+			return w.reply(ctx, chatID, "Invalid delivery id")
+		}
+		if err := w.Store.RetryDelivery(ctx, deliveryID); err != nil {
+			if errors.Is(err, sql.ErrNoRows) { return w.reply(ctx, chatID, "Delivery is not retryable") }
+			return err
+		}
+		return w.reply(ctx, chatID, "Delivery queued for retry")
 	case "/send":
 		if len(parts) == 1 { return w.reply(ctx, chatID, "Usage: /send <text>") }
 		target, err := w.Store.ChatTarget(ctx, chatID)
@@ -242,6 +266,41 @@ func (w Worker) handleCommand(ctx context.Context, chatID int64, command string)
 	default:
 		return w.reply(ctx, chatID, "Unknown command. Use /help")
 	}
+}
+
+func (w Worker) handleSystemCommand(ctx context.Context, command string) error {
+	parts := strings.Fields(command)
+	if len(parts) == 0 {
+		return nil
+	}
+
+	var text string
+	switch parts[0] {
+	case "/help":
+		text = "Commands: /chats /status /help"
+	case "/status":
+		text = "Bridge is online"
+	case "/chats":
+		chats, err := w.Store.ListChats(ctx)
+		if err != nil {
+			return err
+		}
+		if len(chats) == 0 {
+			text = "No chats"
+			break
+		}
+		var lines []string
+		for _, chat := range chats {
+			lines = append(lines, fmt.Sprintf("%d - %s", chat.ID, chat.DisplayName))
+		}
+		text = strings.Join(lines, "\n")
+	default:
+		text = "Unknown command. Use /help"
+	}
+	return w.Store.CreateOutbox(ctx, "telegram", nil, map[string]any{
+		"thread_id": w.SystemThreadID,
+		"body":      text,
+	})
 }
 
 func (w Worker) reply(ctx context.Context, chatID int64, text string) error {

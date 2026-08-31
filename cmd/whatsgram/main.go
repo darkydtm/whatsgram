@@ -48,6 +48,7 @@ func main() {
 		WhatsApp: whatsapp,
 		Telegram: telegram,
 		GroupID:  cfg.TelegramGroupID,
+		SystemThreadID: cfg.TelegramSystemThreadID,
 	}).Run(ctx)
 
 	server := &http.Server{Addr: cfg.HTTPAddr, Handler: (httpapi.Server{

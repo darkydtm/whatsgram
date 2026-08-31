@@ -20,6 +20,7 @@ type Config struct {
 	TelegramBotToken       string
 	TelegramWebhookSecret  string
 	TelegramGroupID        int64
+	TelegramSystemThreadID int64
 	TelegramAllowedUserIDs map[int64]bool
 }
 
@@ -67,6 +68,12 @@ func Load() (Config, error) {
 	config.TelegramGroupID, err = strconv.ParseInt(groupID, 10, 64)
 	if err != nil {
 		return Config{}, fmt.Errorf("TELEGRAM_GROUP_ID: %w", err)
+	}
+	if raw := os.Getenv("TELEGRAM_SYSTEM_THREAD_ID"); raw != "" {
+		config.TelegramSystemThreadID, err = strconv.ParseInt(raw, 10, 64)
+		if err != nil {
+			return Config{}, fmt.Errorf("TELEGRAM_SYSTEM_THREAD_ID: %w", err)
+		}
 	}
 
 	allowedUsers, err := get("TELEGRAM_ALLOWED_USER_IDS")

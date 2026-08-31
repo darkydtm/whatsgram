@@ -30,3 +30,6 @@ CREATE TABLE IF NOT EXISTS outbox_events (
  next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT now(), last_error TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS outbox_pending_idx ON outbox_events(status, next_attempt_at);
+CREATE INDEX IF NOT EXISTS inbox_pending_idx ON inbox_events(status, created_at);
+UPDATE outbox_events SET status = 'pending' WHERE status = 'processing';
+UPDATE inbox_events SET status = 'pending' WHERE status = 'processing';

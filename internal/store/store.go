@@ -215,12 +215,16 @@ func (s *Store) LinkTopic(ctx context.Context, chatID, groupID, threadID int64) 
 	return err
 }
 
-func (s *Store) AddMessage(ctx context.Context, chatID int64, direction, providerID, body string) error {
-	_, err := s.DB.ExecContext(ctx, `
+func (s *Store) AddMessage(ctx context.Context, chatID int64, direction, providerID, body string) (bool, error) {
+	result, err := s.DB.ExecContext(ctx, `
 		INSERT INTO messages(chat_id, direction, provider_message_id, body)
 		VALUES ($1, $2, $3, $4)
 		ON CONFLICT(provider_message_id) DO NOTHING`, chatID, direction, providerID, body)
-	return err
+	if err != nil {
+		return false, err
+	}
+	count, err := result.RowsAffected()
+	return count == 1, err
 }
 
 func (s *Store) ChatTarget(ctx context.Context, chatID int64) (string, error) {
@@ -276,6 +280,12 @@ func (s *Store) SetMuted(ctx context.Context, chatID int64, muted bool) error {
 	return err
 }
 
+func (s *Store) IsMuted(ctx context.Context, chatID int64) (bool, error) {
+	var muted bool
+	err := s.DB.QueryRowContext(ctx, `SELECT muted FROM chats WHERE id = $1`, chatID).Scan(&muted)
+	return muted, err
+}
+
 func (s *Store) SetMessageStatus(ctx context.Context, providerID, status string) error {
 	_, err := s.DB.ExecContext(ctx, `UPDATE messages SET status = $1 WHERE provider_message_id = $2`, status, providerID)
 	return err
@@ -298,6 +308,24 @@ func (s *Store) GetDelivery(ctx context.Context, id int64) (Delivery, error) {
 		&delivery.Attempts, &delivery.LastError, &delivery.CreatedAt,
 	)
 	return delivery, err
+}
+
+func (s *Store) RetryDelivery(ctx context.Context, id int64) error {
+	result, err := s.DB.ExecContext(ctx, `
+		UPDATE outbox_events
+		SET status = 'pending', next_attempt_at = now(), last_error = NULL
+		WHERE id = $1 AND status IN ('dead', 'failed')`, id)
+	if err != nil {
+		return err
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
 func RetryDelay(attempts int) time.Duration {

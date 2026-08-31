@@ -34,6 +34,7 @@ func (s Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/messages", s.listMessages)
 	mux.HandleFunc("POST /api/commands", s.createCommand)
 	mux.HandleFunc("GET /api/deliveries/{id}", s.getDelivery)
+	mux.HandleFunc("POST /api/deliveries/{id}/retry", s.retryDelivery)
 	return mux
 }
 
@@ -101,6 +102,22 @@ func (s Server) getDelivery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, delivery)
+}
+
+func (s Server) retryDelivery(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id <= 0 {
+		http.Error(w, "invalid delivery id", http.StatusBadRequest)
+		return
+	}
+	if err := s.Store.RetryDelivery(r.Context(), id); err == sql.ErrNoRows {
+		http.NotFound(w, r)
+		return
+	} else if err != nil {
+		http.Error(w, "storage error", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusAccepted)
 }
 
 func writeJSON(w http.ResponseWriter, value any) {
