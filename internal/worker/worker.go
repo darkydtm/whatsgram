@@ -118,6 +118,9 @@ func (w Worker) handleWhatsApp(ctx context.Context, payload []byte) error {
 			return err
 		}
 	}
+	if strings.TrimSpace(event.Body) == "" && strings.TrimSpace(event.Caption) != "" {
+		event.Body = event.Caption
+	}
 	inserted, err := w.Store.AddMessage(ctx, chatID, "inbound", event.ID, event.Body)
 	if err != nil || !inserted {
 		return err

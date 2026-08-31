@@ -157,10 +157,7 @@ func (w WhatsApp) SendMedia(ctx context.Context, recipient, mediaType string, co
 
 func jsonMessage(event *events.Message) ([]byte, error) {
 	event.UnwrapRaw()
-	body := event.Message.GetConversation()
-	if body == "" {
-		body = event.Message.GetExtendedTextMessage().GetText()
-	}
+	body := messageBody(event.Message)
 	return json.Marshal(struct {
 		From    string `json:"from"`
 		Name    string `json:"name"`
@@ -170,6 +167,16 @@ func jsonMessage(event *events.Message) ([]byte, error) {
 		MediaID string `json:"media_id,omitempty"`
 		Caption string `json:"caption,omitempty"`
 	}{event.Info.Chat.String(), event.Info.PushName, string(event.Info.ID), event.Info.MediaType, body, string(event.Info.ID), mediaCaption(event.Message)})
+}
+
+func messageBody(message *waE2E.Message) string {
+	if message == nil {
+		return ""
+	}
+	if body := message.GetConversation(); body != "" {
+		return body
+	}
+	return message.GetExtendedTextMessage().GetText()
 }
 
 func mediaCaption(message *waE2E.Message) string {
