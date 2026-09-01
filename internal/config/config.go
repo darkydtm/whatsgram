@@ -13,6 +13,7 @@ type Config struct {
 
 	TelegramBotToken       string
 	TelegramWebhookSecret  string
+	TelegramWebhookURL     string
 	TelegramGroupID        int64
 	TelegramSystemThreadID int64
 	TelegramAllowedUserIDs map[int64]bool
@@ -36,6 +37,9 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	if config.TelegramWebhookSecret, err = get("TELEGRAM_WEBHOOK_SECRET"); err != nil {
+		return Config{}, err
+	}
+	if config.TelegramWebhookURL, err = get("TELEGRAM_WEBHOOK_URL"); err != nil {
 		return Config{}, err
 	}
 

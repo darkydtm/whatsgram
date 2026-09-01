@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"go.mau.fi/whatsmeow/proto/waE2E"
+	"go.mau.fi/whatsmeow/types/events"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -118,5 +119,24 @@ func TestMessageBodyNonMediaFormats(t *testing.T) {
 	}})
 	if !strings.Contains(contact, "Bob") || !strings.Contains(contact, "BEGIN:VCARD") {
 		t.Fatalf("contact body = %q", contact)
+	}
+}
+
+func TestEmptyWhatsAppEventIsIgnored(t *testing.T) {
+	if hasMessagePayload(&events.Message{}) {
+		t.Fatal("empty WhatsApp event should not be stored")
+	}
+	if !hasMessagePayload(&events.Message{Message: &waE2E.Message{Conversation: proto.String("hello")}}) {
+		t.Fatal("message event should be stored")
+	}
+}
+
+func TestUnsupportedWhatsAppMessageIsIgnored(t *testing.T) {
+	payload, err := jsonMessage(&events.Message{Message: &waE2E.Message{MessageContextInfo: &waE2E.MessageContextInfo{}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if payload != nil {
+		t.Fatalf("unsupported message payload = %s", payload)
 	}
 }

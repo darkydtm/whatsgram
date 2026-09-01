@@ -1,7 +1,9 @@
 package worker
 
 import (
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"testing"
 )
 
@@ -44,5 +46,14 @@ func TestTelegramMediaKeepsFileMetadata(t *testing.T) {
 	_, file := telegramMedia(&message)
 	if file.FileName != "a.pdf" || file.MimeType != "application/pdf" {
 		t.Fatalf("file = %+v", file)
+	}
+}
+
+func TestInboxNoRowsAreDiscarded(t *testing.T) {
+	if !ignorableInboxError(sql.ErrNoRows) {
+		t.Fatal("sql.ErrNoRows must be recognized")
+	}
+	if ignorableInboxError(errors.New("temporary storage error")) {
+		t.Fatal("unrelated errors must remain retryable")
 	}
 }

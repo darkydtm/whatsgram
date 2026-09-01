@@ -40,6 +40,9 @@ func NewWhatsApp(ctx context.Context, databaseURL string, inbox *store.Store) (W
 	client.AddEventHandler(func(evt any) {
 		switch event := evt.(type) {
 		case *events.Message:
+			if !hasMessagePayload(event) {
+				return
+			}
 			if event.Info.IsFromMe {
 				return
 			}
@@ -51,6 +54,9 @@ func NewWhatsApp(ctx context.Context, databaseURL string, inbox *store.Store) (W
 				}
 			}
 			payload, err := jsonMessage(event)
+			if err == nil && payload == nil {
+				return
+			}
 			if err == nil && chatName != "" {
 				var data map[string]any
 				if err = json.Unmarshal(payload, &data); err == nil {
@@ -86,7 +92,7 @@ func NewWhatsApp(ctx context.Context, databaseURL string, inbox *store.Store) (W
 						continue
 					}
 					historyEvent, err := client.ParseWebMessage(chat, item.GetMessage())
-					if err != nil || historyEvent.Info.IsFromMe {
+					if err != nil || historyEvent.Info.IsFromMe || !hasMessagePayload(historyEvent) {
 						continue
 					}
 					if historyEvent.Info.IsGroup {
@@ -95,6 +101,9 @@ func NewWhatsApp(ctx context.Context, databaseURL string, inbox *store.Store) (W
 							chatName = conversation.GetName()
 						}
 						payload, err := jsonMessage(historyEvent)
+						if err == nil && payload == nil {
+							continue
+						}
 						if err == nil && chatName != "" {
 							var data map[string]any
 							if err = json.Unmarshal(payload, &data); err == nil {
@@ -111,6 +120,9 @@ func NewWhatsApp(ctx context.Context, databaseURL string, inbox *store.Store) (W
 						continue
 					}
 					payload, err := jsonMessage(historyEvent)
+					if err == nil && payload == nil {
+						continue
+					}
 					if err == nil {
 						err = inbox.PutInbox(ctx, "whatsapp", string(historyEvent.Info.ID), payload)
 					}
@@ -135,6 +147,10 @@ func NewWhatsApp(ctx context.Context, databaseURL string, inbox *store.Store) (W
 		}
 	})
 	return WhatsApp{Client: client, Container: container}, nil
+}
+
+func hasMessagePayload(event *events.Message) bool {
+	return event != nil && (event.Message != nil || event.RawMessage != nil)
 }
 
 func (w WhatsApp) Start(ctx context.Context) error {
@@ -327,14 +343,14 @@ func jsonMessage(event *events.Message) ([]byte, error) {
 	if strings.TrimSpace(body) == "" {
 		body = mediaCaption(event.Message)
 	}
-	if strings.TrimSpace(body) == "" && media == nil {
-		body = "[WHATSAPP MESSAGE]"
-	}
 	name := event.Info.PushName
 	if name == "" {
 		name = event.Info.Sender.User
 	}
 	action, targetID, reaction := messageAction(event)
+	if strings.TrimSpace(body) == "" && media == nil && action == "" {
+		return nil, nil
+	}
 	return json.Marshal(struct {
 		From     string     `json:"from"`
 		Name     string     `json:"name"`

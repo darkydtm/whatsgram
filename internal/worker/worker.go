@@ -109,10 +109,18 @@ func (w Worker) processInbox(ctx context.Context) {
 	}
 	if err != nil {
 		log.Printf("process inbox %d: %v", event.ID, err)
+		if ignorableInboxError(err) {
+			_ = w.Store.CompleteInbox(ctx, event.ID)
+			return
+		}
 		_ = w.Store.ResetInbox(ctx, event.ID, err)
 		return
 	}
 	_ = w.Store.CompleteInbox(ctx, event.ID)
+}
+
+func ignorableInboxError(err error) bool {
+	return errors.Is(err, sql.ErrNoRows)
 }
 
 func (w Worker) handleWhatsApp(ctx context.Context, payload []byte) error {
@@ -194,7 +202,7 @@ func (w Worker) handleWhatsApp(ctx context.Context, payload []byte) error {
 		event.Body = event.Caption
 	}
 	if strings.TrimSpace(event.Body) == "" && event.Media == nil {
-		event.Body = "[WHATSAPP MESSAGE]"
+		return nil
 	}
 	inserted, err := w.Store.AddMessage(ctx, chatID, "inbound", event.ID, event.Body)
 	if err != nil || !inserted {

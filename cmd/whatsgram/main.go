@@ -46,6 +46,9 @@ func main() {
 		}
 	}()
 	telegram := provider.Telegram{Token: cfg.TelegramBotToken, Client: client}
+	if err := telegram.SetWebhook(ctx, cfg.TelegramWebhookURL, cfg.TelegramWebhookSecret); err != nil {
+		log.Fatal(err)
+	}
 
 	go (worker.Worker{
 		Store:          st,

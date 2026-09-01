@@ -23,6 +23,9 @@ services:
       HTTP_ADDR: :8080
     ports:
       - "8080:8080"
+    networks:
+      - default
+      - edge
     depends_on:
       postgres:
         condition: service_healthy
@@ -36,3 +39,7 @@ services:
 volumes:
   postgres-data:
     name: whatsgram-postgres-data
+
+networks:
+  edge:
+    external: true

@@ -23,6 +23,8 @@ var telegramRateLimit = struct {
 	next time.Time
 }{}
 
+const telegramRequestInterval = 3200 * time.Millisecond
+
 type File struct {
 	ID   string `json:"file_id"`
 	Path string `json:"file_path"`
@@ -74,7 +76,7 @@ func (t Telegram) post(ctx context.Context, method, contentType string, body []b
 		case <-timer.C:
 		}
 	}
-	telegramRateLimit.next = time.Now().Add(1100 * time.Millisecond)
+	telegramRateLimit.next = time.Now().Add(telegramRequestInterval)
 
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		"https://api.telegram.org/bot"+t.Token+"/"+method,
@@ -119,6 +121,15 @@ func (t Telegram) post(ctx context.Context, method, contentType string, body []b
 		return nil, fmt.Errorf("telegram: %s", result.Description)
 	}
 	return result.Result, nil
+}
+
+func (t Telegram) SetWebhook(ctx context.Context, url, secret string) error {
+	_, err := t.call(ctx, "setWebhook", map[string]any{
+		"url":             url,
+		"secret_token":    secret,
+		"allowed_updates": []string{"message", "edited_message"},
+	})
+	return err
 }
 
 func (t Telegram) CreateTopic(ctx context.Context, groupID int64, name string) (int64, error) {
