@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -26,7 +28,41 @@ type File struct {
 	Path string `json:"file_path"`
 }
 
+type Media struct {
+	Kind     string
+	Mimetype string
+	Filename string
+	Caption  string
+	Data     []byte
+}
+
+var telegramUploads = map[string]struct{ method, field string }{
+	"image":      {"sendPhoto", "photo"},
+	"video":      {"sendVideo", "video"},
+	"animation":  {"sendAnimation", "animation"},
+	"video_note": {"sendVideoNote", "video_note"},
+	"audio":      {"sendAudio", "audio"},
+	"voice":      {"sendVoice", "voice"},
+	"document":   {"sendDocument", "document"},
+	"sticker":    {"sendSticker", "sticker"},
+}
+
+const TelegramUploadLimit = 50 << 20
+
+// SupportsCaption reports whether Telegram accepts a caption for the media kind.
+func SupportsCaption(kind string) bool {
+	return kind != "sticker" && kind != "video_note"
+}
+
 func (t Telegram) call(ctx context.Context, method string, payload any) (json.RawMessage, error) {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	return t.post(ctx, method, "application/json", body)
+}
+
+func (t Telegram) post(ctx context.Context, method, contentType string, body []byte) (json.RawMessage, error) {
 	telegramRateLimit.Lock()
 	defer telegramRateLimit.Unlock()
 	if wait := time.Until(telegramRateLimit.next); wait > 0 {
@@ -40,18 +76,13 @@ func (t Telegram) call(ctx context.Context, method string, payload any) (json.Ra
 	}
 	telegramRateLimit.next = time.Now().Add(1100 * time.Millisecond)
 
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return nil, err
-	}
-
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		"https://api.telegram.org/bot"+t.Token+"/"+method,
 		bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
-	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Content-Type", contentType)
 
 	response, err := t.Client.Do(request)
 	if err != nil {
@@ -127,13 +158,39 @@ func (t Telegram) SendText(ctx context.Context, groupID, threadID int64, text st
 	return message.MessageID, nil
 }
 
-func (t Telegram) SendMedia(ctx context.Context, groupID, threadID int64, mediaType, fileID, caption string) (int64, error) {
-	result, err := t.call(ctx, "send"+mediaType, map[string]any{
-		"chat_id":           groupID,
-		"message_thread_id": threadID,
-		mediaType:           fileID,
-		"caption":           caption,
-	})
+func (t Telegram) SendMedia(ctx context.Context, groupID, threadID int64, media Media) (int64, error) {
+	upload, ok := telegramUploads[media.Kind]
+	if !ok {
+		return 0, fmt.Errorf("unsupported Telegram media kind %q", media.Kind)
+	}
+	if len(media.Data) > TelegramUploadLimit {
+		return 0, fmt.Errorf("media exceeds Telegram upload limit: %d bytes", len(media.Data))
+	}
+	body := &bytes.Buffer{}
+	form := multipart.NewWriter(body)
+	fields := map[string]string{"chat_id": strconv.FormatInt(groupID, 10)}
+	if threadID != 0 {
+		fields["message_thread_id"] = strconv.FormatInt(threadID, 10)
+	}
+	if media.Caption != "" && SupportsCaption(media.Kind) {
+		fields["caption"] = media.Caption
+	}
+	for name, value := range fields {
+		if err := form.WriteField(name, value); err != nil {
+			return 0, err
+		}
+	}
+	part, err := form.CreateFormFile(upload.field, mediaFilename(media))
+	if err != nil {
+		return 0, err
+	}
+	if _, err := part.Write(media.Data); err != nil {
+		return 0, err
+	}
+	if err := form.Close(); err != nil {
+		return 0, err
+	}
+	result, err := t.post(ctx, upload.method, form.FormDataContentType(), body.Bytes())
 	if err != nil {
 		return 0, err
 	}
@@ -144,6 +201,18 @@ func (t Telegram) SendMedia(ctx context.Context, groupID, threadID int64, mediaT
 		return 0, err
 	}
 	return message.MessageID, nil
+}
+
+func mediaFilename(media Media) string {
+	if media.Filename != "" {
+		return media.Filename
+	}
+	return "file" + defaultExtensions[media.Kind]
+}
+
+var defaultExtensions = map[string]string{
+	"image": ".jpg", "sticker": ".webp", "video": ".mp4", "animation": ".mp4",
+	"video_note": ".mp4", "audio": ".mp3", "voice": ".ogg", "document": ".bin",
 }
 
 func (t Telegram) EditText(ctx context.Context, groupID, messageID int64, text string) error {

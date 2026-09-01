@@ -25,45 +25,54 @@ type Worker struct {
 }
 
 type whatsappEvent struct {
-	From     string `json:"from"`
-	Name     string `json:"name"`
-	ChatName string `json:"chat_name"`
-	ID       string `json:"id"`
-	Type     string `json:"type"`
-	Body     string `json:"body"`
-	Status   string `json:"status"`
-	MediaID  string `json:"media_id"`
-	Mimetype string `json:"mimetype"`
-	Caption  string `json:"caption"`
-	Edited   bool   `json:"edited"`
-	Deleted  bool   `json:"deleted"`
-	TargetID string `json:"target_id"`
-	Action   string `json:"action"`
-	Reaction string `json:"reaction"`
+	From     string              `json:"from"`
+	Name     string              `json:"name"`
+	ChatName string              `json:"chat_name"`
+	ID       string              `json:"id"`
+	Type     string              `json:"type"`
+	Body     string              `json:"body"`
+	Status   string              `json:"status"`
+	MediaID  string              `json:"media_id"`
+	Mimetype string              `json:"mimetype"`
+	Caption  string              `json:"caption"`
+	Media    *provider.MediaInfo `json:"media"`
+	Edited   bool                `json:"edited"`
+	Deleted  bool                `json:"deleted"`
+	TargetID string              `json:"target_id"`
+	Action   string              `json:"action"`
+	Reaction string              `json:"reaction"`
+}
+
+type telegramFile struct {
+	FileID   string `json:"file_id"`
+	FileName string `json:"file_name"`
+	MimeType string `json:"mime_type"`
+	FileSize int64  `json:"file_size"`
+}
+
+type telegramSticker struct {
+	telegramFile
+	IsAnimated bool `json:"is_animated"`
+	IsVideo    bool `json:"is_video"`
+}
+
+type telegramMessage struct {
+	MessageID       int64            `json:"message_id"`
+	MessageThreadID int64            `json:"message_thread_id"`
+	Text            string           `json:"text"`
+	Caption         string           `json:"caption"`
+	Photo           []telegramFile   `json:"photo"`
+	Document        *telegramFile    `json:"document"`
+	Video           *telegramFile    `json:"video"`
+	Animation       *telegramFile    `json:"animation"`
+	VideoNote       *telegramFile    `json:"video_note"`
+	Audio           *telegramFile    `json:"audio"`
+	Voice           *telegramFile    `json:"voice"`
+	Sticker         *telegramSticker `json:"sticker"`
 }
 
 type telegramEvent struct {
-	Message *struct {
-		MessageID       int64  `json:"message_id"`
-		MessageThreadID int64  `json:"message_thread_id"`
-		Text            string `json:"text"`
-		Caption         string `json:"caption"`
-		Photo           []struct {
-			FileID string `json:"file_id"`
-		} `json:"photo"`
-		Document *struct {
-			FileID string `json:"file_id"`
-		} `json:"document"`
-		Video *struct {
-			FileID string `json:"file_id"`
-		} `json:"video"`
-		Audio *struct {
-			FileID string `json:"file_id"`
-		} `json:"audio"`
-		Voice *struct {
-			FileID string `json:"file_id"`
-		} `json:"voice"`
-	} `json:"message"`
+	Message       *telegramMessage `json:"message"`
 	EditedMessage *struct {
 		MessageThreadID int64  `json:"message_thread_id"`
 		MessageID       int64  `json:"message_id"`
@@ -173,14 +182,18 @@ func (w Worker) handleWhatsApp(ctx context.Context, payload []byte) error {
 		})
 	}
 	if event.MediaID != "" {
-		if err := w.Store.CreateMedia(ctx, chatID, "whatsapp", event.MediaID, event.Mimetype, event.Caption); err != nil {
+		mimetype := event.Mimetype
+		if event.Media != nil {
+			mimetype = event.Media.Mimetype
+		}
+		if err := w.Store.CreateMedia(ctx, chatID, "whatsapp", event.MediaID, mimetype, event.Caption); err != nil {
 			return err
 		}
 	}
 	if strings.TrimSpace(event.Body) == "" && strings.TrimSpace(event.Caption) != "" {
 		event.Body = event.Caption
 	}
-	if strings.TrimSpace(event.Body) == "" {
+	if strings.TrimSpace(event.Body) == "" && event.Media == nil {
 		event.Body = "[WHATSAPP MESSAGE]"
 	}
 	inserted, err := w.Store.AddMessage(ctx, chatID, "inbound", event.ID, event.Body)
@@ -201,6 +214,20 @@ func (w Worker) handleWhatsApp(ctx context.Context, payload []byte) error {
 	}
 	if err != nil {
 		return err
+	}
+	if event.Media != nil {
+		caption := strings.TrimSpace(event.Body)
+		if caption == "" {
+			caption = name
+		} else {
+			caption = fmt.Sprintf("%s:\n%s", name, caption)
+		}
+		return w.Store.CreateOutbox(ctx, "telegram", &chatID, map[string]any{
+			"thread_id":           threadID,
+			"body":                caption,
+			"provider_message_id": event.ID,
+			"media":               event.Media,
+		})
 	}
 	body := fmt.Sprintf("%s:\n%s", name, event.Body)
 	return w.Store.CreateOutbox(ctx, "telegram", &chatID, map[string]any{
@@ -249,10 +276,11 @@ func (w Worker) handleTelegram(ctx context.Context, payload []byte) error {
 	if err != nil {
 		return err
 	}
-	mediaType, fileID := telegramMedia(event.Message)
-	if mediaType != "" {
-		return w.Store.CreateOutbox(ctx, "whatsapp", &chatID, map[string]string{
-			"to": recipient, "body": event.Message.Caption, "media_type": mediaType, "media_id": fileID,
+	mediaKind, file := telegramMedia(event.Message)
+	if mediaKind != "" {
+		return w.Store.CreateOutbox(ctx, "whatsapp", &chatID, map[string]any{
+			"to": recipient, "body": event.Message.Caption, "media_kind": mediaKind,
+			"media_id": file.FileID, "mimetype": file.MimeType, "filename": file.FileName,
 		})
 	}
 	if strings.TrimSpace(event.Message.Text) == "" {
@@ -390,43 +418,30 @@ func (w Worker) reply(ctx context.Context, chatID int64, text string) error {
 	return w.Store.CreateOutbox(ctx, "telegram", &chatID, map[string]any{"thread_id": threadID, "body": text})
 }
 
-func telegramMedia(message *struct {
-	MessageID       int64  `json:"message_id"`
-	MessageThreadID int64  `json:"message_thread_id"`
-	Text            string `json:"text"`
-	Caption         string `json:"caption"`
-	Photo           []struct {
-		FileID string `json:"file_id"`
-	} `json:"photo"`
-	Document *struct {
-		FileID string `json:"file_id"`
-	} `json:"document"`
-	Video *struct {
-		FileID string `json:"file_id"`
-	} `json:"video"`
-	Audio *struct {
-		FileID string `json:"file_id"`
-	} `json:"audio"`
-	Voice *struct {
-		FileID string `json:"file_id"`
-	} `json:"voice"`
-}) (string, string) {
-	if len(message.Photo) > 0 {
-		return "image", message.Photo[len(message.Photo)-1].FileID
+func telegramMedia(message *telegramMessage) (kind string, file telegramFile) {
+	switch {
+	case len(message.Photo) > 0:
+		return "image", message.Photo[len(message.Photo)-1]
+	case message.Sticker != nil:
+		if message.Sticker.IsAnimated || message.Sticker.IsVideo {
+			return "document", message.Sticker.telegramFile
+		}
+		return "sticker", message.Sticker.telegramFile
+	case message.Animation != nil:
+		return "animation", *message.Animation
+	case message.VideoNote != nil:
+		return "video_note", *message.VideoNote
+	case message.Video != nil:
+		return "video", *message.Video
+	case message.Voice != nil:
+		return "voice", *message.Voice
+	case message.Audio != nil:
+		return "audio", *message.Audio
+	case message.Document != nil:
+		return "document", *message.Document
+	default:
+		return "", telegramFile{}
 	}
-	if message.Document != nil {
-		return "document", message.Document.FileID
-	}
-	if message.Video != nil {
-		return "video", message.Video.FileID
-	}
-	if message.Audio != nil {
-		return "audio", message.Audio.FileID
-	}
-	if message.Voice != nil {
-		return "audio", message.Voice.FileID
-	}
-	return "", ""
 }
 
 func safeTopicName(name string) string {
@@ -446,12 +461,15 @@ func (w Worker) processOutbox(ctx context.Context) {
 		return
 	}
 	var payload struct {
-		To                string `json:"to"`
-		Body              string `json:"body"`
-		ThreadID          int64  `json:"thread_id"`
-		ProviderMessageID string `json:"provider_message_id"`
-		MediaType         string `json:"media_type"`
-		MediaID           string `json:"media_id"`
+		To                string              `json:"to"`
+		Body              string              `json:"body"`
+		ThreadID          int64               `json:"thread_id"`
+		ProviderMessageID string              `json:"provider_message_id"`
+		MediaKind         string              `json:"media_kind"`
+		MediaID           string              `json:"media_id"`
+		Mimetype          string              `json:"mimetype"`
+		Filename          string              `json:"filename"`
+		Media             *provider.MediaInfo `json:"media"`
 		Action            *struct {
 			Type      string `json:"type"`
 			MessageID int64  `json:"message_id"`
@@ -463,29 +481,19 @@ func (w Worker) processOutbox(ctx context.Context) {
 		return
 	}
 	if job.Provider == "whatsapp" {
-		log.Printf("sending WhatsApp outbox %d to=%s media=%s", job.ID, payload.To, payload.MediaType)
-		if payload.MediaType != "" {
-			file, fileErr := w.Telegram.GetFile(ctx, payload.MediaID)
-			if fileErr != nil {
-				err = fileErr
-			} else {
-				var content io.ReadCloser
-				content, err = w.Telegram.DownloadFile(ctx, file.Path)
-				if err == nil {
-					defer content.Close()
-					var providerID string
-					providerID, err = w.WhatsApp.SendMedia(ctx, payload.To, payload.MediaType, content, payload.Body)
-					if err == nil && job.ChatID.Valid {
-						err = w.Store.AddOutboundMessage(ctx, job.ChatID.Int64, providerID, payload.Body)
-					}
-				}
+		log.Printf("sending WhatsApp outbox %d to=%s media=%s", job.ID, payload.To, payload.MediaKind)
+		var providerID string
+		if payload.MediaKind != "" {
+			var media provider.Media
+			media, err = w.downloadTelegramMedia(ctx, payload.MediaID, payload.MediaKind, payload.Mimetype, payload.Filename, payload.Body)
+			if err == nil {
+				providerID, err = w.WhatsApp.SendMedia(ctx, payload.To, media)
 			}
 		} else {
-			var providerID string
 			providerID, err = w.WhatsApp.SendText(ctx, payload.To, payload.Body)
-			if err == nil && job.ChatID.Valid {
-				err = w.Store.AddOutboundMessage(ctx, job.ChatID.Int64, providerID, payload.Body)
-			}
+		}
+		if err == nil && job.ChatID.Valid {
+			err = w.Store.AddOutboundMessage(ctx, job.ChatID.Int64, providerID, payload.Body)
 		}
 		if err != nil {
 			log.Printf("send WhatsApp message to %s: %v", payload.To, err)
@@ -505,7 +513,11 @@ func (w Worker) processOutbox(ctx context.Context) {
 			}
 		} else {
 			var telegramID int64
-			telegramID, err = w.Telegram.SendText(ctx, w.GroupID, payload.ThreadID, payload.Body)
+			if payload.Media != nil {
+				telegramID, err = w.sendTelegramMedia(ctx, payload.ThreadID, payload.Body, payload.Media)
+			} else {
+				telegramID, err = w.Telegram.SendText(ctx, w.GroupID, payload.ThreadID, payload.Body)
+			}
 			if err == nil && payload.ProviderMessageID != "" {
 				err = w.Store.SetTelegramMessageID(ctx, payload.ProviderMessageID, telegramID)
 			}
@@ -521,4 +533,40 @@ func (w Worker) processOutbox(ctx context.Context) {
 	if err := w.Store.CompleteOutbox(ctx, job.ID); err != nil {
 		log.Printf("complete outbox %d: %v", job.ID, err)
 	}
+}
+
+// ponytail: buffer media in memory, stream through object storage if 50 MB files strain the worker
+func (w Worker) downloadTelegramMedia(ctx context.Context, fileID, kind, mimetype, filename, caption string) (provider.Media, error) {
+	file, err := w.Telegram.GetFile(ctx, fileID)
+	if err != nil {
+		return provider.Media{}, err
+	}
+	content, err := w.Telegram.DownloadFile(ctx, file.Path)
+	if err != nil {
+		return provider.Media{}, err
+	}
+	defer content.Close()
+	data, err := io.ReadAll(io.LimitReader(content, provider.TelegramUploadLimit))
+	if err != nil {
+		return provider.Media{}, err
+	}
+	return provider.Media{Kind: kind, Mimetype: mimetype, Filename: filename, Caption: caption, Data: data}, nil
+}
+
+func (w Worker) sendTelegramMedia(ctx context.Context, threadID int64, caption string, info *provider.MediaInfo) (int64, error) {
+	if info.Length > provider.TelegramUploadLimit {
+		return w.Telegram.SendText(ctx, w.GroupID, threadID, fmt.Sprintf("%s\n[%s is too large to forward: %d bytes]", caption, info.Kind, info.Length))
+	}
+	data, err := w.WhatsApp.DownloadMedia(ctx, info.Encoded)
+	if err != nil {
+		return 0, err
+	}
+	if !provider.SupportsCaption(info.Kind) && caption != "" {
+		if _, err := w.Telegram.SendText(ctx, w.GroupID, threadID, caption); err != nil {
+			return 0, err
+		}
+	}
+	return w.Telegram.SendMedia(ctx, w.GroupID, threadID, provider.Media{
+		Kind: info.Kind, Mimetype: info.Mimetype, Filename: info.Filename, Caption: caption, Data: data,
+	})
 }

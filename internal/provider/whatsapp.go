@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"os"
 	"sort"
@@ -195,39 +194,107 @@ func (w WhatsApp) SendText(ctx context.Context, recipient, body string) (string,
 	return string(response.ID), err
 }
 
-func (w WhatsApp) SendMedia(ctx context.Context, recipient, mediaType string, content io.Reader, caption string) (string, error) {
+var whatsappUploads = map[string]whatsmeow.MediaType{
+	"image": whatsmeow.MediaImage, "sticker": whatsmeow.MediaImage,
+	"video": whatsmeow.MediaVideo, "animation": whatsmeow.MediaVideo, "video_note": whatsmeow.MediaVideo,
+	"audio": whatsmeow.MediaAudio, "voice": whatsmeow.MediaAudio,
+	"document": whatsmeow.MediaDocument,
+}
+
+func (w WhatsApp) SendMedia(ctx context.Context, recipient string, media Media) (string, error) {
 	jid, err := parseJID(recipient)
 	if err != nil {
 		return "", err
 	}
-	appInfo, ok := map[string]whatsmeow.MediaType{
-		"image": whatsmeow.MediaImage, "document": whatsmeow.MediaDocument,
-		"video": whatsmeow.MediaVideo, "audio": whatsmeow.MediaAudio,
-	}[strings.ToLower(mediaType)]
+	appInfo, ok := whatsappUploads[media.Kind]
 	if !ok {
-		return "", fmt.Errorf("unsupported WhatsApp media type %q", mediaType)
+		return "", fmt.Errorf("unsupported WhatsApp media kind %q", media.Kind)
 	}
-	data, err := io.ReadAll(content)
+	upload, err := w.Client.Upload(ctx, media.Data, appInfo)
 	if err != nil {
 		return "", err
 	}
-	upload, err := w.Client.Upload(ctx, data, appInfo)
-	if err != nil {
-		return "", err
-	}
-	message := &waE2E.Message{}
-	switch strings.ToLower(mediaType) {
-	case "image":
-		message.ImageMessage = &waE2E.ImageMessage{URL: &upload.URL, DirectPath: &upload.DirectPath, MediaKey: upload.MediaKey, FileSHA256: upload.FileSHA256, FileEncSHA256: upload.FileEncSHA256, FileLength: &upload.FileLength, Caption: proto.String(caption)}
-	case "document":
-		message.DocumentMessage = &waE2E.DocumentMessage{URL: &upload.URL, DirectPath: &upload.DirectPath, MediaKey: upload.MediaKey, FileSHA256: upload.FileSHA256, FileEncSHA256: upload.FileEncSHA256, FileLength: &upload.FileLength, Caption: proto.String(caption)}
-	case "video":
-		message.VideoMessage = &waE2E.VideoMessage{URL: &upload.URL, DirectPath: &upload.DirectPath, MediaKey: upload.MediaKey, FileSHA256: upload.FileSHA256, FileEncSHA256: upload.FileEncSHA256, FileLength: &upload.FileLength, Caption: proto.String(caption)}
-	case "audio":
-		message.AudioMessage = &waE2E.AudioMessage{URL: &upload.URL, DirectPath: &upload.DirectPath, MediaKey: upload.MediaKey, FileSHA256: upload.FileSHA256, FileEncSHA256: upload.FileEncSHA256, FileLength: &upload.FileLength}
-	}
-	response, err := w.Client.SendMessage(ctx, jid, message)
+	response, err := w.Client.SendMessage(ctx, jid, whatsappMedia(media, upload))
 	return string(response.ID), err
+}
+
+func whatsappMedia(media Media, upload whatsmeow.UploadResponse) *waE2E.Message {
+	mimetype := media.Mimetype
+	if mimetype == "" {
+		mimetype = defaultMimetypes[media.Kind]
+	}
+	switch media.Kind {
+	case "image":
+		return &waE2E.Message{ImageMessage: &waE2E.ImageMessage{
+			URL: &upload.URL, DirectPath: &upload.DirectPath, MediaKey: upload.MediaKey,
+			FileSHA256: upload.FileSHA256, FileEncSHA256: upload.FileEncSHA256, FileLength: &upload.FileLength,
+			Mimetype: proto.String(mimetype), Caption: proto.String(media.Caption),
+		}}
+	case "sticker":
+		return &waE2E.Message{StickerMessage: &waE2E.StickerMessage{
+			URL: &upload.URL, DirectPath: &upload.DirectPath, MediaKey: upload.MediaKey,
+			FileSHA256: upload.FileSHA256, FileEncSHA256: upload.FileEncSHA256, FileLength: &upload.FileLength,
+			Mimetype: proto.String(mimetype),
+		}}
+	case "video", "animation", "video_note":
+		return &waE2E.Message{VideoMessage: &waE2E.VideoMessage{
+			URL: &upload.URL, DirectPath: &upload.DirectPath, MediaKey: upload.MediaKey,
+			FileSHA256: upload.FileSHA256, FileEncSHA256: upload.FileEncSHA256, FileLength: &upload.FileLength,
+			Mimetype: proto.String(mimetype), Caption: proto.String(media.Caption),
+			GifPlayback: proto.Bool(media.Kind == "animation"),
+		}}
+	case "audio", "voice":
+		return &waE2E.Message{AudioMessage: &waE2E.AudioMessage{
+			URL: &upload.URL, DirectPath: &upload.DirectPath, MediaKey: upload.MediaKey,
+			FileSHA256: upload.FileSHA256, FileEncSHA256: upload.FileEncSHA256, FileLength: &upload.FileLength,
+			Mimetype: proto.String(mimetype), PTT: proto.Bool(media.Kind == "voice"),
+		}}
+	default:
+		return &waE2E.Message{DocumentMessage: &waE2E.DocumentMessage{
+			URL: &upload.URL, DirectPath: &upload.DirectPath, MediaKey: upload.MediaKey,
+			FileSHA256: upload.FileSHA256, FileEncSHA256: upload.FileEncSHA256, FileLength: &upload.FileLength,
+			Mimetype: proto.String(mimetype), Caption: proto.String(media.Caption),
+			FileName: proto.String(mediaFilename(media)),
+		}}
+	}
+}
+
+var defaultMimetypes = map[string]string{
+	"image": "image/jpeg", "sticker": "image/webp", "video": "video/mp4",
+	"animation": "video/mp4", "video_note": "video/mp4", "audio": "audio/mpeg",
+	"voice": "audio/ogg; codecs=opus", "document": "application/octet-stream",
+}
+
+// DownloadMedia decrypts the attachment of a serialized WhatsApp message.
+func (w WhatsApp) DownloadMedia(ctx context.Context, encoded []byte) ([]byte, error) {
+	var message waE2E.Message
+	if err := proto.Unmarshal(encoded, &message); err != nil {
+		return nil, err
+	}
+	attachment := downloadable(unwrapMessage(&message))
+	if attachment == nil {
+		return nil, fmt.Errorf("no downloadable WhatsApp attachment")
+	}
+	return w.Client.Download(ctx, attachment)
+}
+
+func downloadable(message *waE2E.Message) whatsmeow.DownloadableMessage {
+	switch {
+	case message.GetImageMessage() != nil:
+		return message.GetImageMessage()
+	case message.GetVideoMessage() != nil:
+		return message.GetVideoMessage()
+	case message.GetPtvMessage() != nil:
+		return message.GetPtvMessage()
+	case message.GetAudioMessage() != nil:
+		return message.GetAudioMessage()
+	case message.GetDocumentMessage() != nil:
+		return message.GetDocumentMessage()
+	case message.GetStickerMessage() != nil:
+		return message.GetStickerMessage()
+	default:
+		return nil
+	}
 }
 
 func (w WhatsApp) EditText(ctx context.Context, recipient, messageID, body string) error {
@@ -255,11 +322,12 @@ func jsonMessage(event *events.Message) ([]byte, error) {
 	if event.RawMessage != nil {
 		event = event.UnwrapRaw()
 	}
+	media := whatsAppMedia(event.Message)
 	body := messageBody(event.Message)
 	if strings.TrimSpace(body) == "" {
 		body = mediaCaption(event.Message)
 	}
-	if strings.TrimSpace(body) == "" {
+	if strings.TrimSpace(body) == "" && media == nil {
 		body = "[WHATSAPP MESSAGE]"
 	}
 	name := event.Info.PushName
@@ -268,22 +336,104 @@ func jsonMessage(event *events.Message) ([]byte, error) {
 	}
 	action, targetID, reaction := messageAction(event)
 	return json.Marshal(struct {
-		From     string `json:"from"`
-		Name     string `json:"name"`
-		ChatName string `json:"chat_name,omitempty"`
-		ID       string `json:"id"`
-		Type     string `json:"type"`
-		Body     string `json:"body"`
-		MediaID  string `json:"media_id,omitempty"`
-		Caption  string `json:"caption,omitempty"`
-		Action   string `json:"action,omitempty"`
-		TargetID string `json:"target_id,omitempty"`
-		Reaction string `json:"reaction,omitempty"`
+		From     string     `json:"from"`
+		Name     string     `json:"name"`
+		ChatName string     `json:"chat_name,omitempty"`
+		ID       string     `json:"id"`
+		Type     string     `json:"type"`
+		Body     string     `json:"body"`
+		MediaID  string     `json:"media_id,omitempty"`
+		Caption  string     `json:"caption,omitempty"`
+		Media    *MediaInfo `json:"media,omitempty"`
+		Action   string     `json:"action,omitempty"`
+		TargetID string     `json:"target_id,omitempty"`
+		Reaction string     `json:"reaction,omitempty"`
 	}{
 		From: chatKey(event.Info.Chat), Name: name, ID: string(event.Info.ID),
 		Type: event.Info.MediaType, Body: body, MediaID: string(event.Info.ID),
-		Caption: mediaCaption(event.Message), Action: action, TargetID: targetID, Reaction: reaction,
+		Caption: mediaCaption(event.Message), Media: media,
+		Action: action, TargetID: targetID, Reaction: reaction,
 	})
+}
+
+type MediaInfo struct {
+	Kind     string `json:"kind"`
+	Mimetype string `json:"mimetype,omitempty"`
+	Filename string `json:"filename,omitempty"`
+	Caption  string `json:"caption,omitempty"`
+	Length   uint64 `json:"length,omitempty"`
+	Encoded  []byte `json:"encoded,omitempty"`
+}
+
+func whatsAppMedia(message *waE2E.Message) *MediaInfo {
+	message = unwrapMessage(message)
+	if message == nil {
+		return nil
+	}
+	info := &MediaInfo{}
+	switch {
+	case message.GetImageMessage() != nil:
+		image := message.GetImageMessage()
+		info.Kind, info.Mimetype, info.Caption, info.Length = "image", image.GetMimetype(), image.GetCaption(), image.GetFileLength()
+	case message.GetStickerMessage() != nil:
+		sticker := message.GetStickerMessage()
+		info.Kind, info.Mimetype, info.Length = "sticker", sticker.GetMimetype(), sticker.GetFileLength()
+		if sticker.GetIsAnimated() || sticker.GetIsLottie() {
+			info.Kind, info.Filename = "document", "sticker.webp"
+		}
+	case message.GetPtvMessage() != nil:
+		video := message.GetPtvMessage()
+		info.Kind, info.Mimetype, info.Length = "video_note", video.GetMimetype(), video.GetFileLength()
+	case message.GetVideoMessage() != nil:
+		video := message.GetVideoMessage()
+		info.Kind, info.Mimetype, info.Caption, info.Length = "video", video.GetMimetype(), video.GetCaption(), video.GetFileLength()
+		if video.GetGifPlayback() {
+			info.Kind = "animation"
+		}
+	case message.GetAudioMessage() != nil:
+		audio := message.GetAudioMessage()
+		info.Kind, info.Mimetype, info.Length = "audio", audio.GetMimetype(), audio.GetFileLength()
+		if audio.GetPTT() {
+			info.Kind = "voice"
+		}
+	case message.GetDocumentMessage() != nil:
+		document := message.GetDocumentMessage()
+		info.Kind, info.Mimetype, info.Caption = "document", document.GetMimetype(), document.GetCaption()
+		info.Filename, info.Length = document.GetFileName(), document.GetFileLength()
+	default:
+		return nil
+	}
+	encoded, err := proto.Marshal(message)
+	if err != nil {
+		return nil
+	}
+	info.Encoded = encoded
+	return info
+}
+
+func unwrapMessage(message *waE2E.Message) *waE2E.Message {
+	for range 8 {
+		var nested *waE2E.Message
+		for _, candidate := range []*waE2E.Message{
+			message.GetDeviceSentMessage().GetMessage(),
+			message.GetEphemeralMessage().GetMessage(),
+			message.GetViewOnceMessage().GetMessage(),
+			message.GetViewOnceMessageV2().GetMessage(),
+			message.GetViewOnceMessageV2Extension().GetMessage(),
+			message.GetEditedMessage().GetMessage(),
+			message.GetDocumentWithCaptionMessage().GetMessage(),
+		} {
+			if candidate != nil {
+				nested = candidate
+				break
+			}
+		}
+		if nested == nil {
+			return message
+		}
+		message = nested
+	}
+	return message
 }
 
 func messageAction(event *events.Message) (string, string, string) {
@@ -344,10 +494,63 @@ func messageBody(message *waE2E.Message) string {
 	if body := message.GetTemplateButtonReplyMessage().GetSelectedDisplayText(); body != "" {
 		return body
 	}
-	return message.GetPollCreationMessage().GetName()
+	if body := pollBody(message.GetPollCreationMessage()); body != "" {
+		return body
+	}
+	if body := locationBody(message); body != "" {
+		return body
+	}
+	if body := contactBody(message); body != "" {
+		return body
+	}
+	return ""
+}
+
+func contactBody(message *waE2E.Message) string {
+	contacts := message.GetContactsArrayMessage().GetContacts()
+	if contact := message.GetContactMessage(); contact != nil {
+		contacts = append(contacts, contact)
+	}
+	if len(contacts) == 0 {
+		return ""
+	}
+	lines := []string{"[contacts]"}
+	for _, contact := range contacts {
+		lines = append(lines, contact.GetDisplayName(), contact.GetVcard())
+	}
+	return strings.Join(lines, "\n")
+}
+
+func pollBody(poll *waE2E.PollCreationMessage) string {
+	if poll == nil {
+		return ""
+	}
+	lines := []string{poll.GetName()}
+	for _, option := range poll.GetOptions() {
+		lines = append(lines, "- "+option.GetOptionName())
+	}
+	return strings.Join(lines, "\n")
+}
+
+func locationBody(message *waE2E.Message) string {
+	location := message.GetLocationMessage()
+	if location == nil {
+		if live := message.GetLiveLocationMessage(); live != nil {
+			return fmt.Sprintf("[live location] %s\nhttps://maps.google.com/?q=%f,%f", live.GetCaption(), live.GetDegreesLatitude(), live.GetDegreesLongitude())
+		}
+		return ""
+	}
+	lines := []string{"[location]"}
+	for _, part := range []string{location.GetName(), location.GetAddress()} {
+		if part != "" {
+			lines = append(lines, part)
+		}
+	}
+	return strings.Join(lines, "\n") + fmt.Sprintf("\nhttps://maps.google.com/?q=%f,%f", location.GetDegreesLatitude(), location.GetDegreesLongitude())
 }
 
 func mediaCaption(message *waE2E.Message) string {
+	message = unwrapMessage(message)
 	if message == nil {
 		return ""
 	}
