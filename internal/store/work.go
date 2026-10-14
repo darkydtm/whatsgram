@@ -86,6 +86,9 @@ func (s *Store) QuarantineInbox(ctx context.Context, id int64, token string, now
 	return changed(s.db.ExecContext(ctx, "UPDATE bridge_inbox SET state='quarantined',lease_token=NULL,lease_until_ms=NULL WHERE id=? AND state='leased' AND lease_token=? AND lease_until_ms>?", id, token, fenceTime(now).UnixMilli()))
 }
 func (s *Store) PlanEvent(ctx context.Context, e domain.Event, token string, deliveries []domain.Delivery, now time.Time) error {
+	return s.PlanEventWithTimers(ctx, e, token, deliveries, nil, now)
+}
+func (s *Store) PlanEventWithTimers(ctx context.Context, e domain.Event, token string, deliveries []domain.Delivery, timers []TimerSpec, now time.Time) error {
 	if e.InboxID <= 0 || now.IsZero() || e.Validate() != nil {
 		return ErrInvalid
 	}
@@ -129,6 +132,15 @@ func (s *Store) PlanEvent(ctx context.Context, e domain.Event, token string, del
 			}
 			d.MessageID = messageID
 			if err := s.insertDelivery(ctx, tx, e.InboxID, d, now); err != nil {
+				return err
+			}
+		}
+		for _, spec := range timers {
+			if messageID <= 0 || (spec.MessageID != 0 && spec.MessageID != messageID) {
+				return ErrConflict
+			}
+			spec.MessageID = messageID
+			if _, err := scheduleTimer(ctx, tx, spec); err != nil {
 				return err
 			}
 		}
@@ -258,6 +270,11 @@ func (s *Store) applySource(ctx context.Context, tx *sql.Tx, e domain.Event, del
 	}
 	if _, err := tx.ExecContext(ctx, "UPDATE bridge_message SET state_version=?,state_payload=?,tombstone=MAX(tombstone,?) WHERE id=?", versionData, text, deleted, messageID); err != nil {
 		return 0, 0, false, safe(err)
+	}
+	if e.Kind == domain.MessageEdit {
+		if _, err := tx.ExecContext(ctx, "UPDATE bridge_outbox SET state='superseded',lease_token=NULL,lease_until_ms=NULL WHERE message_id=? AND send_started_at_ms IS NULL AND operation='message.edit' AND state IN ('pending','leased')", messageID); err != nil {
+			return 0, 0, false, safe(err)
+		}
 	}
 	if deleted {
 		if _, err := tx.ExecContext(ctx, "UPDATE bridge_outbox SET state='superseded',lease_token=NULL,lease_until_ms=NULL WHERE message_id=? AND send_started_at_ms IS NULL AND operation IN ('message.create','message.edit','reaction.set') AND state IN ('pending','leased')", messageID); err != nil {

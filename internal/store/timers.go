@@ -34,17 +34,27 @@ type Timer struct {
 }
 
 func (s *Store) ScheduleTimer(ctx context.Context, spec TimerSpec) (int64, error) {
-	if spec.MessageID <= 0 || spec.Version.Validate() != nil || spec.Deadline.IsZero() || (spec.Kind != TimerExpire && spec.Kind != TimerMappingWait) {
-		return 0, ErrInvalid
-	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, safe(err)
 	}
 	defer tx.Rollback()
+	id, err := scheduleTimer(ctx, tx, spec)
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, safe(err)
+	}
+	return id, nil
+}
+func scheduleTimer(ctx context.Context, tx *sql.Tx, spec TimerSpec) (int64, error) {
+	if spec.MessageID <= 0 || spec.Version.Validate() != nil || spec.Deadline.IsZero() || (spec.Kind != TimerExpire && spec.Kind != TimerMappingWait) {
+		return 0, ErrInvalid
+	}
 	version, _ := json.Marshal(spec.Version)
 	var id, deadline int64
-	err = tx.QueryRowContext(ctx, "SELECT id,deadline_ms FROM bridge_timer WHERE message_id=? AND kind=? AND target_version=?", spec.MessageID, spec.Kind, version).Scan(&id, &deadline)
+	err := tx.QueryRowContext(ctx, "SELECT id,deadline_ms FROM bridge_timer WHERE message_id=? AND kind=? AND target_version=?", spec.MessageID, spec.Kind, version).Scan(&id, &deadline)
 	if err == nil {
 		if deadline != spec.Deadline.UnixMilli() {
 			return 0, ErrConflict
@@ -68,9 +78,6 @@ func (s *Store) ScheduleTimer(ctx context.Context, spec TimerSpec) (int64, error
 	}
 	id, err = result.LastInsertId()
 	if err != nil {
-		return 0, safe(err)
-	}
-	if err := tx.Commit(); err != nil {
 		return 0, safe(err)
 	}
 	return id, nil
@@ -142,6 +149,34 @@ func (s *Store) CompleteTimer(ctx context.Context, id int64, token string, deliv
 	}
 	if tombstone || string(version) != string(effective) || (kind == TimerExpire && kept) {
 		return ErrConflict
+	}
+	if kind == TimerExpire {
+		parts, err := readParts(ctx, tx, messageID)
+		if err != nil {
+			return err
+		}
+		needed := map[string]bool{}
+		for _, p := range parts {
+			if !p.BridgeOwned || p.Deleted || p.Retired {
+				continue
+			}
+			capability := domain.CanRevoke
+			if p.Ref.Platform == domain.Telegram {
+				capability = domain.CanDelete
+			}
+			if p.Capabilities&capability != 0 {
+				needed[refKey(p.Ref)] = true
+			}
+		}
+		for _, d := range deliveries {
+			if d.Target == nil || !needed[refKey(*d.Target)] {
+				return ErrConflict
+			}
+			delete(needed, refKey(*d.Target))
+		}
+		if len(needed) > 0 {
+			return ErrConflict
+		}
 	}
 	if len(deliveries) > 0 {
 		if err := tx.QueryRowContext(ctx, "SELECT inbox_id FROM bridge_outbox WHERE message_id=? ORDER BY id LIMIT 1", messageID).Scan(&inboxID); err != nil {

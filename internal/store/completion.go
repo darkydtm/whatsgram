@@ -88,6 +88,11 @@ func (s *Store) CompleteDelivery(ctx context.Context, id int64, token string, c 
 			return safe(err)
 		}
 	}
+	if (d.Kind == "message.edit" || d.Kind == "message.revoke") && d.Target != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE bridge_source_state SET version=?,deleted=MAX(deleted,?) WHERE part_id=(SELECT id FROM bridge_part WHERE message_id=? AND platform=? AND remote_chat=? AND remote_author=? AND remote_id=?)`, version, d.Kind == "message.revoke" || tombstone, d.MessageID, d.Target.Platform, d.Target.Chat, d.Target.Author, d.Target.ID); err != nil {
+			return safe(err)
+		}
+	}
 	if d.Kind == "message.revoke" && d.Target != nil {
 		if _, err := tx.ExecContext(ctx, "UPDATE bridge_part SET deleted=1 WHERE message_id=? AND platform=? AND remote_chat=? AND remote_author=? AND remote_id=?", d.MessageID, d.Target.Platform, d.Target.Chat, d.Target.Author, d.Target.ID); err != nil {
 			return safe(err)
