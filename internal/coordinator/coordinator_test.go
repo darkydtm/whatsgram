@@ -38,7 +38,7 @@ func (f *fakeTelegramPort) CreateTopic(ctx context.Context, chatID int64, title 
 	ref := domain.TopicRef{
 		ChatID:     chatID,
 		ThreadID:   f.nextThreadID,
-		Generation: 1,
+		Generation: 0,
 	}
 	f.createdTopics = append(f.createdTopics, ref)
 	return ref, nil
@@ -417,6 +417,9 @@ func TestAdminCommandsSyncAndBind(t *testing.T) {
 	chat1, err := st.Chat(ctx, "15550001111@s.whatsapp.net")
 	if err != nil || chat1.Topic == nil || chat1.State != store.ChatActive {
 		t.Fatalf("expected active bound chat, got: %+v, err: %v", chat1, err)
+	}
+	if chat1.Generation < 1 || chat1.Topic.Generation < 1 {
+		t.Fatalf("expected generation >= 1, got chat gen %d, topic gen %d", chat1.Generation, chat1.Topic.Generation)
 	}
 
 	bindEvent := makeTelegramMessageEvent("21", -10012345, 42, 0, "/bind 55 15559998888@s.whatsapp.net")

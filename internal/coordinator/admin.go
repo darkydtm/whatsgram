@@ -130,6 +130,12 @@ func (a *AdminExecutor) handleSync(ctx context.Context, in admin.Input) error {
 			continue
 		}
 
+		gen := int64(1)
+		if ch, err := a.coord.store.Chat(ctx, cand.WhatsAppJID); err == nil {
+			gen = ch.Generation + 1
+		}
+		topicRef.Generation = gen
+
 		if err := a.coord.store.BindTopic(ctx, cand.WhatsAppJID, topicRef); err != nil {
 			failed++
 			continue
