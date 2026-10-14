@@ -29,4 +29,7 @@ require (
 	modernc.org/sqlite v1.60.1
 )
 
-require go.yaml.in/yaml/v3 v3.0.5
+require (
+	github.com/go-telegram/bot v1.27.0
+	go.yaml.in/yaml/v3 v3.0.5
+)
