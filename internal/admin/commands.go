@@ -84,6 +84,31 @@ func (p Policy) parseCommand(in Input) Decision {
 		}
 		command.ThreadID = in.ThreadID
 		command.Argument = privateValue(label)
+	case "bind":
+		if len(fields) != 4 {
+			return invalidCommand()
+		}
+		id, ok := positiveID(fields[3])
+		if !ok {
+			return invalidCommand()
+		}
+		switch fields[1] {
+		case "topic":
+			if !whatsappJID(fields[2]) {
+				return invalidCommand()
+			}
+			command.Argument = privateValue(fields[2])
+			command.ThreadID = id
+		case "message":
+			if !operationID(fields[2]) {
+				return invalidCommand()
+			}
+			command.OperationID = privateValue(fields[2])
+			command.TargetMessageID = id
+		default:
+			return invalidCommand()
+		}
+		command.Mode = fields[1]
 	case "retry":
 		if len(fields) != 3 || !operationID(fields[1]) || fields[2] != "confirm" {
 			return invalidCommand()
@@ -156,6 +181,39 @@ func operationID(value string) bool {
 
 func asciiAlphanumeric(value byte) bool {
 	return value >= 'a' && value <= 'z' || value >= 'A' && value <= 'Z' || value >= '0' && value <= '9'
+}
+
+func whatsappJID(value string) bool {
+	local, domain, ok := strings.Cut(value, "@")
+	if !ok {
+		return false
+	}
+	switch domain {
+	case "s.whatsapp.net":
+		return internationalDigits(local)
+	case "lid":
+		return boundedDigits(local, 20)
+	case "g.us":
+		left, right, legacy := strings.Cut(local, "-")
+		if legacy {
+			return boundedDigits(left, 20) && boundedDigits(right, 20)
+		}
+		return boundedDigits(local, 20)
+	default:
+		return false
+	}
+}
+
+func boundedDigits(value string, max int) bool {
+	if len(value) < 1 || len(value) > max || value[0] < '1' || value[0] > '9' {
+		return false
+	}
+	for _, digit := range value {
+		if digit < '0' || digit > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func invalidCommand() Decision {
