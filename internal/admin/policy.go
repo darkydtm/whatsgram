@@ -46,7 +46,7 @@ type Policy struct {
 }
 
 func NewPolicy(chatID int64, allowed []int64, botUsername string) (Policy, error) {
-	if chatID == 0 || len(allowed) == 0 {
+	if chatID >= 0 || len(allowed) == 0 || !validBotUsername(botUsername) {
 		return Policy{}, errors.New("invalid admin policy")
 	}
 	p := Policy{chatID: chatID, allowed: make(map[int64]struct{}), botUsername: botUsername}
@@ -57,6 +57,18 @@ func NewPolicy(chatID int64, allowed []int64, botUsername string) (Policy, error
 		p.allowed[id] = struct{}{}
 	}
 	return p, nil
+}
+
+func validBotUsername(value string) bool {
+	if len(value) < 5 || len(value) > 32 || !(value[0] >= 'a' && value[0] <= 'z' || value[0] >= 'A' && value[0] <= 'Z') {
+		return false
+	}
+	for i := 1; i < len(value); i++ {
+		if !asciiAlphanumeric(value[i]) && value[i] != '_' {
+			return false
+		}
+	}
+	return true
 }
 
 func (p Policy) DriverID() int64 {
