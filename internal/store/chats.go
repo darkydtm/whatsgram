@@ -71,6 +71,20 @@ func (s *Store) Chat(ctx context.Context, waJID string) (Chat, error) {
 	}
 	return c, nil
 }
+func (s *Store) ChatByTopic(ctx context.Context, telegramChatID, threadID int64) (Chat, error) {
+	if telegramChatID == 0 || threadID <= 0 {
+		return Chat{}, ErrInvalid
+	}
+	var jid string
+	err := s.db.QueryRowContext(ctx, "SELECT wa_jid FROM bridge_chat WHERE tg_chat_id=? AND topic_id=?", telegramChatID, threadID).Scan(&jid)
+	if err == sql.ErrNoRows {
+		return Chat{}, ErrNoWork
+	}
+	if err != nil {
+		return Chat{}, safe(err)
+	}
+	return s.Chat(ctx, jid)
+}
 func (s *Store) BindTopic(ctx context.Context, waJID string, topic domain.TopicRef) error {
 	if topic.ChatID == 0 || topic.ThreadID <= 0 || topic.Generation <= 0 {
 		return ErrInvalid

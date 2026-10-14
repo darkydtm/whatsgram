@@ -122,6 +122,47 @@ func (s *Store) BeginSend(ctx context.Context, id int64, token string, now time.
 	if err := json.Unmarshal(payload, &d); err != nil {
 		return ErrStorage
 	}
+	if d.Target != nil {
+		var owned, deleted, retired bool
+		var caps uint64
+		err := tx.QueryRowContext(ctx, "SELECT is_bridge_owned,deleted,retired,capabilities FROM bridge_part WHERE message_id=? AND platform=? AND remote_chat=? AND remote_author=? AND remote_id=?", d.MessageID, d.Target.Platform, d.Target.Chat, d.Target.Author, d.Target.ID).Scan(&owned, &deleted, &retired, &caps)
+		if err == sql.ErrNoRows {
+			return ErrConflict
+		}
+		if err != nil {
+			return safe(err)
+		}
+		if retired || ((d.Kind == "message.edit" || d.Kind == "reaction.set") && deleted) {
+			return ErrConflict
+		}
+		switch d.Kind {
+		case "message.edit":
+			if !owned || caps&domain.CanEditText == 0 {
+				return ErrConflict
+			}
+		case "message.revoke":
+			needed := domain.CanRevoke
+			if d.Platform == domain.Telegram {
+				needed = domain.CanDelete
+			}
+			if caps&needed == 0 {
+				return ErrConflict
+			}
+		case "reaction.set":
+			if caps&domain.CanReact == 0 {
+				return ErrConflict
+			}
+		}
+	}
+	if d.MessageID > 0 && (d.Kind == "message.create" || d.Kind == "message.edit" || d.Kind == "reaction.set") {
+		var tombstone bool
+		if err := tx.QueryRowContext(ctx, "SELECT tombstone FROM bridge_message WHERE id=?", d.MessageID).Scan(&tombstone); err != nil {
+			return safe(err)
+		}
+		if tombstone {
+			return ErrConflict
+		}
+	}
 	if d.Platform == domain.WhatsApp {
 		target := ""
 		if d.Target != nil {

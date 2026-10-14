@@ -171,6 +171,16 @@ func TestMigrationRollback(t *testing.T) {
 	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM sqlite_master WHERE name='temporary_test'").Scan(&n); err != nil || n != 0 {
 		t.Fatal("partial migration", n, err)
 	}
+	migrations := []migration{{version: 1, sql: "CREATE TABLE first_success(id INTEGER);"}, {version: 2, sql: "CREATE TABLE second_failure(id INTEGER); INSERT INTO nonexistent VALUES(1);"}}
+	if err := migrate(ctx, db, migrations); err == nil {
+		t.Fatal("invalid second migration succeeded")
+	}
+	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM sqlite_master WHERE name='first_success'").Scan(&n); err != nil || n != 1 {
+		t.Fatal("successful migration not independently committed", n, err)
+	}
+	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM sqlite_master WHERE name='second_failure'").Scan(&n); err != nil || n != 0 {
+		t.Fatal("second migration partially committed", n, err)
+	}
 }
 
 func TestOpenErrorDoesNotExposePath(t *testing.T) {

@@ -47,6 +47,11 @@ func TestSourceVersionDoesNotInventCrossSourceOrder(t *testing.T) {
 		t.Fatal("epoch conflict missing", err)
 	}
 	other = v
+	other.Tie = "z"
+	if _, err := v.Compare(other); !errors.Is(err, ErrConflict) {
+		t.Fatal("opaque tie acquired invented order", err)
+	}
+	other = v
 	other.Kind = "different"
 	if _, err := v.Compare(other); !errors.Is(err, ErrConflict) {
 		t.Fatal("cross-source order invented", err)

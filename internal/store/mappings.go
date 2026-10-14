@@ -69,3 +69,53 @@ func readParts(ctx context.Context, q queryer, messageID int64) ([]domain.Delive
 	}
 	return parts, safe(rows.Err())
 }
+
+func (s *Store) Part(ctx context.Context, ref domain.MessageRef) (domain.DeliveredPart, error) {
+	if ref.Validate() != nil {
+		return domain.DeliveredPart{}, ErrInvalid
+	}
+	var p domain.DeliveredPart
+	p.Ref = ref
+	err := s.db.QueryRowContext(ctx, "SELECT part_index,role,is_bridge_owned,capabilities,deleted,retired FROM bridge_part WHERE platform=? AND remote_chat=? AND remote_author=? AND remote_id=?", ref.Platform, ref.Chat, ref.Author, ref.ID).Scan(&p.Index, &p.Role, &p.BridgeOwned, &p.Capabilities, &p.Deleted, &p.Retired)
+	if err == sql.ErrNoRows {
+		return domain.DeliveredPart{}, ErrNoWork
+	}
+	return p, safe(err)
+}
+func (s *Store) SourceState(ctx context.Context, ref domain.MessageRef) (domain.SourceVersion, bool, error) {
+	if ref.Validate() != nil {
+		return domain.SourceVersion{}, false, ErrInvalid
+	}
+	var payload []byte
+	var version domain.SourceVersion
+	var deleted bool
+	err := s.db.QueryRowContext(ctx, "SELECT ss.version,ss.deleted FROM bridge_source_state ss JOIN bridge_part p ON p.id=ss.part_id WHERE p.platform=? AND p.remote_chat=? AND p.remote_author=? AND p.remote_id=?", ref.Platform, ref.Chat, ref.Author, ref.ID).Scan(&payload, &deleted)
+	if err == sql.ErrNoRows {
+		return version, false, ErrNoWork
+	}
+	if err != nil {
+		return version, false, safe(err)
+	}
+	if err := json.Unmarshal(payload, &version); err != nil {
+		return version, false, ErrStorage
+	}
+	return version, deleted, nil
+}
+func (s *Store) RetirePart(ctx context.Context, ref domain.MessageRef, expected domain.SourceVersion) error {
+	if ref.Validate() != nil || expected.Validate() != nil {
+		return ErrInvalid
+	}
+	version, _ := json.Marshal(expected)
+	result, err := s.db.ExecContext(ctx, `UPDATE bridge_part SET retired=1 WHERE platform=? AND remote_chat=? AND remote_author=? AND remote_id=? AND EXISTS (SELECT 1 FROM bridge_source_state ss WHERE ss.part_id=bridge_part.id AND ss.version=?)`, ref.Platform, ref.Chat, ref.Author, ref.ID, version)
+	if err != nil {
+		return safe(err)
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return safe(err)
+	}
+	if n != 1 {
+		return ErrConflict
+	}
+	return nil
+}

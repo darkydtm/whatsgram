@@ -69,11 +69,8 @@ func (v SourceVersion) Compare(other SourceVersion) (int, error) {
 	if v.Order > other.Order {
 		return 1, nil
 	}
-	if v.Tie < other.Tie {
-		return -1, nil
-	}
-	if v.Tie > other.Tie {
-		return 1, nil
+	if v.Tie != other.Tie {
+		return 0, ErrConflict
 	}
 	if v.Digest != other.Digest {
 		return 0, ErrConflict

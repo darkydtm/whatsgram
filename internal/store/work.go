@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"strconv"
 	"time"
 
 	"github.com/darkydtm/whatsgram/internal/domain"
@@ -71,6 +72,12 @@ func (s *Store) DeferInbox(ctx context.Context, id int64, token string, availabl
 		return ErrInvalid
 	}
 	return changed(s.db.ExecContext(ctx, "UPDATE bridge_inbox SET state='pending',available_at_ms=?,lease_token=NULL,lease_until_ms=NULL WHERE id=? AND state='leased' AND lease_token=? AND lease_until_ms>?", availableAt.UnixMilli(), id, token, now.UnixMilli()))
+}
+func (s *Store) QuarantineInbox(ctx context.Context, id int64, token string, now time.Time) error {
+	if now.IsZero() {
+		return ErrInvalid
+	}
+	return changed(s.db.ExecContext(ctx, "UPDATE bridge_inbox SET state='quarantined',lease_token=NULL,lease_until_ms=NULL WHERE id=? AND state='leased' AND lease_token=? AND lease_until_ms>?", id, token, now.UnixMilli()))
 }
 func (s *Store) PlanEvent(ctx context.Context, e domain.Event, token string, deliveries []domain.Delivery, now time.Time) error {
 	if e.InboxID <= 0 || now.IsZero() || e.Validate() != nil {
@@ -164,6 +171,14 @@ func (s *Store) applySource(ctx context.Context, tx *sql.Tx, e domain.Event, del
 				return 0, 0, false, ErrConflict
 			}
 		}
+		var boundWA string
+		var boundTG int64
+		if err := tx.QueryRowContext(ctx, "SELECT wa_jid,tg_chat_id FROM bridge_chat WHERE id=?", chatID).Scan(&boundWA, &boundTG); err != nil {
+			return 0, 0, false, safe(err)
+		}
+		if (e.Source == domain.WhatsApp && e.Chat != boundWA) || (e.Source == domain.Telegram && e.Chat != strconv.FormatInt(boundTG, 10)) {
+			return 0, 0, false, ErrConflict
+		}
 		version, _ := json.Marshal(e.Version)
 		text, _ := json.Marshal(e.Text)
 		deleted := e.Kind == domain.MessageRevoke
@@ -238,6 +253,9 @@ func (s *Store) applySource(ctx context.Context, tx *sql.Tx, e domain.Event, del
 		return 0, 0, false, safe(err)
 	}
 	if deleted {
+		if _, err := tx.ExecContext(ctx, "UPDATE bridge_outbox SET state='superseded',lease_token=NULL,lease_until_ms=NULL WHERE message_id=? AND send_started_at_ms IS NULL AND operation IN ('message.create','message.edit','reaction.set') AND state IN ('pending','leased')", messageID); err != nil {
+			return 0, 0, false, safe(err)
+		}
 		if _, err := tx.ExecContext(ctx, "UPDATE bridge_part SET deleted=1 WHERE message_id=?", messageID); err != nil {
 			return 0, 0, false, safe(err)
 		}
@@ -251,6 +269,15 @@ func (s *Store) insertDelivery(ctx context.Context, tx *sql.Tx, inboxID int64, d
 	switch d.Kind {
 	case "message.create", "message.edit", "message.revoke", "reaction.set", "topic.create", "topic.rename":
 	default:
+		return ErrInvalid
+	}
+	if d.Target != nil && d.Target.Platform != d.Platform {
+		return ErrInvalid
+	}
+	if d.Kind == "message.create" && d.MessageID <= 0 {
+		return ErrInvalid
+	}
+	if (d.Kind == "message.edit" || d.Kind == "message.revoke" || d.Kind == "reaction.set") && (d.MessageID <= 0 || d.Target == nil) {
 		return ErrInvalid
 	}
 	if d.Platform == domain.WhatsApp && (d.WhatsAppSendID == "" || d.EchoActor == "" || len(d.EchoActor) > 256) {
