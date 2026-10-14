@@ -22,6 +22,7 @@ type storedEvent struct {
 	Text       *storedText
 	Metadata   []byte
 	Raw        []byte
+	TelegramThreadID int64 `json:",omitempty"`
 }
 
 type storedDelivery struct {
@@ -44,7 +45,7 @@ type storedDelivery struct {
 }
 
 func marshalEvent(e domain.Event) ([]byte, error) {
-	return json.Marshal(storedEvent{e.InboxID, e.Key, e.Source, e.Kind, e.Chat, e.Target, e.Actor, e.OccurredAt, e.Version, (*storedText)(e.Text), e.Metadata, e.Raw})
+	return json.Marshal(storedEvent{e.InboxID, e.Key, e.Source, e.Kind, e.Chat, e.Target, e.Actor, e.OccurredAt, e.Version, (*storedText)(e.Text), e.Metadata, e.Raw, e.TelegramThreadID})
 }
 
 func marshalText(text *domain.TextContent) ([]byte, error) {

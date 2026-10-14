@@ -114,6 +114,7 @@ type Event struct {
 	Text       *TextContent
 	Metadata   []byte
 	Raw        []byte
+	TelegramThreadID int64 `json:",omitempty"`
 }
 
 func (e Event) Validate() error {
@@ -125,6 +126,9 @@ func (e Event) Validate() error {
 		if e.Target == nil {
 			return ErrInvalid
 		}
+	}
+	if e.TelegramThreadID < 0 || (e.Source != Telegram && e.TelegramThreadID != 0) {
+		return ErrInvalid
 	}
 	if e.Target != nil && (e.Target.Validate() != nil || e.Target.Platform != e.Source || e.Target.Chat != e.Chat) {
 		return ErrInvalid

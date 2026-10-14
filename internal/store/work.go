@@ -149,10 +149,10 @@ func (s *Store) PlanEventWithTimers(ctx context.Context, e domain.Event, token s
 			return err
 		}
 	} else {
-		if len(deliveries) == 0 {
-			return ErrInvalid
+		chatID, err = routeChatEvent(ctx, tx, e, deliveries)
+		if err != nil {
+			return err
 		}
-		chatID = deliveries[0].ChatID
 	}
 	if !suppress {
 		for _, d := range deliveries {

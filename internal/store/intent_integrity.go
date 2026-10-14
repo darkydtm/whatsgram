@@ -24,6 +24,10 @@ func validateStoredIntent(ctx context.Context, tx *sql.Tx, id int64, d domain.De
 		return ErrStorage
 	}
 	if messageID == 0 {
+		routed, err := routeChatEvent(ctx, tx, e, []domain.Delivery{d})
+		if err != nil || routed != chatID {
+			return ErrConflict
+		}
 		if d.ExpectedVersion != e.Version {
 			return ErrConflict
 		}
