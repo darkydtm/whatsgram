@@ -125,7 +125,7 @@ func (s *Store) SetChatState(ctx context.Context, chatID, generation int64, stat
 	default:
 		return ErrInvalid
 	}
-	result, err := s.db.ExecContext(ctx, "UPDATE bridge_chat SET state=? WHERE id=? AND topic_generation=? AND (state!='discovered' OR ?!='active')", state, chatID, generation, state)
+	result, err := s.db.ExecContext(ctx, "UPDATE bridge_chat SET state=? WHERE id=? AND topic_generation=? AND (?!='active' OR topic_id IS NOT NULL)", state, chatID, generation, state)
 	if err != nil {
 		return safe(err)
 	}

@@ -23,6 +23,24 @@ func event(key string) domain.Event {
 	return domain.Event{Key: key, Source: domain.Telegram, Kind: domain.MessageCreate, Chat: "-100", Actor: "42", Target: &domain.MessageRef{Platform: domain.Telegram, Chat: "-100", Author: "42", ID: key}, Version: domain.SourceVersion{Kind: "tg", Order: 1, Digest: "digest-" + key, StreamEpoch: "epoch"}, Text: &domain.TextContent{Text: "hello"}, Raw: []byte("synthetic")}
 }
 
+func TestChatCannotBecomeActiveWithoutBoundTopic(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	if err := s.DiscoverChat(ctx, domain.ChatCandidate{WhatsAppJID: "123@g.us", Title: "chat", Source: "observed"}, -100); err != nil {
+		t.Fatal(err)
+	}
+	chat, err := s.Chat(ctx, "123@g.us")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetChatState(ctx, chat.ID, 0, ChatBlocked); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetChatState(ctx, chat.ID, 0, ChatActive); !errors.Is(err, ErrConflict) {
+		t.Fatal("unbound chat active", err)
+	}
+}
+
 func TestChatBindingRequiresExplicitGeneration(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
