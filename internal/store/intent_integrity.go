@@ -47,6 +47,8 @@ func validateStoredIntent(ctx context.Context, tx *sql.Tx, id int64, d domain.De
 			if err != nil || order < 0 {
 				return ErrConflict
 			}
+		} else if d.Kind == "reaction.set" {
+			return nil
 		} else if current != d.ExpectedVersion {
 			return ErrConflict
 		}

@@ -260,7 +260,7 @@ func (s *Store) applySource(ctx context.Context, tx *sql.Tx, e domain.Event, del
 		if err := tx.QueryRowContext(ctx, "SELECT topic_generation FROM bridge_chat WHERE id=?", chatID).Scan(&generation); err != nil {
 			return 0, 0, false, safe(err)
 		}
-		result, err = tx.ExecContext(ctx, "INSERT INTO bridge_part(message_id,platform,remote_chat,remote_author,remote_id,part_index,role,is_bridge_owned,capabilities,topic_generation,deleted) VALUES (?,?,?,?,?,0,'primary',0,0,?,?)", messageID, e.Source, e.Target.Chat, e.Target.Author, e.Target.ID, generation, deleted)
+		result, err = tx.ExecContext(ctx, "INSERT INTO bridge_part(message_id,platform,remote_chat,remote_author,remote_id,part_index,role,is_bridge_owned,capabilities,topic_generation,deleted) VALUES (?,?,?,?,?,0,'primary',0,?,?,?)", messageID, e.Source, e.Target.Chat, e.Target.Author, e.Target.ID, domain.CanReact, generation, deleted)
 		if err != nil {
 			return 0, 0, false, safe(err)
 		}
