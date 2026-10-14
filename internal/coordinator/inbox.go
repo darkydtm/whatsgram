@@ -438,29 +438,34 @@ func (c *Coordinator) handleWhatsAppEvent(ctx context.Context, e domain.Event, t
 }
 
 func (c *Coordinator) isBridgeDispatched(ctx context.Context, e domain.Event, targetID string) bool {
-	if c.isKnownBridgeSend(e.Key, targetID) {
-		return true
-	}
-
-	if e.Target != nil {
-		part, err := c.store.Part(ctx, *e.Target)
-		if err == nil && part.BridgeOwned {
+	switch e.Kind {
+	case domain.MessageEdit, domain.MessageRevoke, domain.ReactionSet:
+		return c.isKnownBridgeSend(e.Key, "")
+	default:
+		if c.isKnownBridgeSend(e.Key, targetID) {
 			return true
 		}
 
-		matched, err := c.store.MatchEcho(ctx, store.Echo{
-			Platform: domain.WhatsApp,
-			Chat:     e.Chat,
-			Actor:    e.Actor,
-			EventID:  e.Target.ID,
-			Kind:     string(e.Kind),
-			Digest:   e.Version.Digest,
-		})
-		if err == nil && matched {
-			return true
+		if e.Target != nil {
+			part, err := c.store.Part(ctx, *e.Target)
+			if err == nil && part.BridgeOwned {
+				return true
+			}
+
+			matched, err := c.store.MatchEcho(ctx, store.Echo{
+				Platform: domain.WhatsApp,
+				Chat:     e.Chat,
+				Actor:    e.Actor,
+				EventID:  e.Target.ID,
+				Kind:     string(e.Kind),
+				Digest:   e.Version.Digest,
+			})
+			if err == nil && matched {
+				return true
+			}
 		}
+		return false
 	}
-	return false
 }
 
 func (c *Coordinator) completeInbox(ctx context.Context, e domain.Event, token string, now time.Time) error {

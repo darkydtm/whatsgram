@@ -3,6 +3,7 @@ package coordinator
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -104,6 +105,11 @@ func (c *Coordinator) isKnownBridgeSend(key, targetID string) bool {
 	if key != "" {
 		if _, ok := c.sentWhatsAppIDs.Load(key); ok {
 			return true
+		}
+		if idx := strings.LastIndex(key, "/"); idx >= 0 && idx < len(key)-1 {
+			if _, ok := c.sentWhatsAppIDs.Load(key[idx+1:]); ok {
+				return true
+			}
 		}
 	}
 	return false
