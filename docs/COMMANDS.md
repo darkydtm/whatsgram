@@ -14,7 +14,7 @@ Construct `NewPolicy(config.Telegram.ChatID, config.Telegram.AllowedUserIDs, bot
 
 ## Command syntax
 
-Commands use exact lowercase names. `/name` and `/name@configured_username` are accepted. Only the addressed username is case-insensitive; a foreign username is ignored with code `other-bot`. Multiple `@` delimiters or an empty username reject. No foreign username is inferred or repaired.
+Commands use exact lowercase names. `/name` and `/name@configured_username` are accepted. Only the addressed ASCII username is case-insensitive; a syntactically valid foreign username is ignored with code `other-bot`. Non-ASCII, malformed, multiple-`@` or empty addressed usernames reject before case matching. No foreign username is inferred or repaired.
 
 Command text must be valid UTF-8 and at most 4096 bytes, including surrounding whitespace. This is a conservative parser limit, not a claim about Telegram's character limit. Unicode whitespace separates literal arguments. There is no shell, quoting, escape or environment-variable expansion. Context `ThreadID` and `ReplyMessageID` must be in `0..2147483647`, with zero meaning absent. Explicit numeric identifiers use canonical ASCII decimal `[1-9][0-9]*` in `1..2147483647`, without a sign or leading zeros. Source `MessageID` is retained in `Input` for the future coordinator and is not a parsed argument.
 
