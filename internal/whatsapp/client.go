@@ -35,6 +35,9 @@ type networkClient interface {
 	ConnectContext(context.Context) error
 	Disconnect()
 	SendMessage(context.Context, types.JID, *waE2E.Message, ...whatsmeow.SendRequestExtra) (whatsmeow.SendResponse, error)
+	GetQRChannel(context.Context) (<-chan whatsmeow.QRChannelItem, error)
+	PairPhone(context.Context, string, bool, whatsmeow.PairClientType, string) (string, error)
+	GetJoinedGroups(context.Context) ([]*types.GroupInfo, error)
 }
 
 type Client struct {
@@ -120,6 +123,35 @@ func validID(id string) bool {
 }
 
 func (c *Client) AllocateSendID() string { return c.client.GenerateMessageID() }
+
+func (c *Client) DiscoverChats(ctx context.Context) ([]domain.ChatCandidate, error) {
+	if ctx == nil {
+		return nil, adapterError(domain.Permanent, "invalid_target")
+	}
+	c.mu.Lock()
+	if c.device.GetJID().IsEmpty() || c.device.Deleted {
+		c.mu.Unlock()
+		return nil, adapterError(domain.Permanent, "invalid_target")
+	}
+	c.mu.Unlock()
+
+	groups, err := c.network.GetJoinedGroups(ctx)
+	if err != nil {
+		return nil, adapterError(domain.Transient, "not_connected")
+	}
+	candidates := make([]domain.ChatCandidate, 0, len(groups))
+	for _, g := range groups {
+		if g != nil && !g.JID.IsEmpty() {
+			candidates = append(candidates, domain.ChatCandidate{
+				WhatsAppJID:    g.JID.ToNonAD().String(),
+				Title:          g.Name,
+				Source:         "group",
+				HistoryPartial: false,
+			})
+		}
+	}
+	return candidates, nil
+}
 
 func buildText(chat types.JID, content domain.TextContent) (*waE2E.Message, error) {
 	if content.Validate() != nil || content.Text == "" {

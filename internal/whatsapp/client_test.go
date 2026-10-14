@@ -44,11 +44,18 @@ type fakeNetwork struct {
 	message   *waE2E.Message
 	extra     whatsmeow.SendRequestExtra
 	response  whatsmeow.SendResponse
+	groups    []*types.GroupInfo
 	err       error
 }
 
 func (f *fakeNetwork) IsConnected() bool { return f.connected }
 func (f *fakeNetwork) IsLoggedIn() bool  { return f.connected }
+func (f *fakeNetwork) GetJoinedGroups(context.Context) ([]*types.GroupInfo, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.groups, nil
+}
 func (f *fakeNetwork) SendMessage(_ context.Context, to types.JID, m *waE2E.Message, extra ...whatsmeow.SendRequestExtra) (whatsmeow.SendResponse, error) {
 	f.sends++
 	f.to, f.message, f.extra = to, m, extra[0]
@@ -98,5 +105,32 @@ func TestSendTextRejectsMissingIDBeforeTransport(t *testing.T) {
 	var ae domain.AdapterError
 	if !errors.As(err, &ae) || ae.Class != domain.Permanent || f.sends != 0 {
 		t.Fatal("missing durable ID must fail before transport")
+	}
+}
+
+func TestDiscoverChats(t *testing.T) {
+	d := deviceFixture(t, true)
+	c, err := New(context.Background(), d, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	groupJID := types.NewJID("120363000000000000", types.GroupServer)
+	fn := &fakeNetwork{
+		Client:    c.client,
+		connected: true,
+		groups: []*types.GroupInfo{
+			{
+				JID:       groupJID,
+				GroupName: types.GroupName{Name: "Test Group"},
+			},
+		},
+	}
+	c.network = fn
+	candidates, err := c.DiscoverChats(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(candidates) != 1 || candidates[0].WhatsAppJID != groupJID.String() || candidates[0].Title != "Test Group" || candidates[0].Source != "group" {
+		t.Fatalf("unexpected candidates: %+v", candidates)
 	}
 }
