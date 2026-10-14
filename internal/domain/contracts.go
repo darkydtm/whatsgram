@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"strings"
 	"time"
 	"unicode/utf16"
@@ -338,3 +339,13 @@ type RecoveryDecision struct {
 	AvailableAt time.Time
 	Code        string
 }
+
+func (Event) LogValue() slog.Value                 { return slog.StringValue("Event[redacted]") }
+func (PairingNotice) LogValue() slog.Value         { return slog.StringValue("PairingNotice[redacted]") }
+func (e AdapterError) LogValue() slog.Value        { return slog.StringValue(e.Error()) }
+func (TextContent) Format(s fmt.State, _ rune)     { io.WriteString(s, "TextContent[redacted]") }
+func (TextContent) LogValue() slog.Value           { return slog.StringValue("TextContent[redacted]") }
+func (Delivery) Format(s fmt.State, _ rune)        { io.WriteString(s, "Delivery[redacted]") }
+func (Delivery) LogValue() slog.Value              { return slog.StringValue("Delivery[redacted]") }
+func (SendTextRequest) Format(s fmt.State, _ rune) { io.WriteString(s, "SendTextRequest[redacted]") }
+func (SendTextRequest) LogValue() slog.Value       { return slog.StringValue("SendTextRequest[redacted]") }

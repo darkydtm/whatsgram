@@ -1,8 +1,10 @@
 package domain
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"testing"
 )
@@ -66,6 +68,18 @@ func TestSensitiveTypesFormatSafely(t *testing.T) {
 			if strings.Contains(fmt.Sprintf(format, v), secret) {
 				t.Fatalf("secret leaked by %T %s", v, format)
 			}
+		}
+	}
+}
+
+func TestSensitiveTypesDoNotLeakThroughStructuredLogging(t *testing.T) {
+	secret := "DO-NOT-EXPOSE"
+	values := []any{Event{Text: &TextContent{Text: secret}, Raw: []byte(secret)}, PairingNotice{Secret: secret}, TextContent{Text: secret}, Delivery{Text: &TextContent{Text: secret}}, AdapterError{Code: secret, Cause: errors.New(secret)}}
+	for _, value := range values {
+		var out bytes.Buffer
+		slog.New(slog.NewJSONHandler(&out, nil)).Info("safe", "value", value)
+		if strings.Contains(out.String(), secret) {
+			t.Fatalf("structured log leaked %T", value)
 		}
 	}
 }
