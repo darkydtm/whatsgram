@@ -1,6 +1,9 @@
 package admin
 
-import "errors"
+import (
+	"errors"
+	"strings"
+)
 
 const (
 	Telegram = "telegram"
@@ -30,9 +33,10 @@ type Input struct {
 }
 
 type Decision struct {
-	Kind   Kind
-	Code   string
-	Reason string
+	Kind    Kind
+	Code    string
+	Reason  string
+	Command ParsedCommand
 }
 
 type Policy struct {
@@ -89,6 +93,9 @@ func (p Policy) Decide(in Input) Decision {
 	}
 	if _, ok := p.allowed[in.UserID]; !ok {
 		return Decision{Kind: Reject, Code: "unauthorized-actor", Reason: "The actor is not authorized."}
+	}
+	if in.BotCommand || strings.HasPrefix(strings.TrimSpace(in.Text), "/") {
+		return p.parseCommand(in)
 	}
 	return Decision{Kind: Bridge, Code: "admitted", Reason: "Authorized data input."}
 }
