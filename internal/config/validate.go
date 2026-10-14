@@ -21,6 +21,25 @@ func (c Config) Validate() error {
 			return errors.New("invalid telegram.allowed_user_ids")
 		}
 	}
+	if !validEndpoint(c.Telegram.Endpoint) {
+		return errors.New("invalid telegram.endpoint")
+	}
+	if c.WhatsApp.PairingMode != "qr" && c.WhatsApp.PairingMode != "code" {
+		return errors.New("invalid whatsapp.pairing_mode")
+	}
+	if c.WhatsApp.HistoryPolicy != "none" && c.WhatsApp.HistoryPolicy != "recent" {
+		return errors.New("invalid whatsapp.history_policy")
+	}
+	if c.WhatsApp.Phone != "" || c.WhatsApp.PairingMode == "code" {
+		if len(c.WhatsApp.Phone) < 7 || len(c.WhatsApp.Phone) > 15 || c.WhatsApp.Phone[0] == '0' {
+			return errors.New("invalid whatsapp.phone")
+		}
+		for _, digit := range c.WhatsApp.Phone {
+			if digit < '0' || digit > '9' {
+				return errors.New("invalid whatsapp.phone")
+			}
+		}
+	}
 	if strings.TrimSpace(c.Database.Path) == "" {
 		return errors.New("invalid database.path")
 	}
