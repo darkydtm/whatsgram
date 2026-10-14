@@ -9,12 +9,14 @@ import (
 )
 
 type ParsedCommand struct {
-	Name            string
-	Mode            string
-	Argument        PrivateValue
-	TargetMessageID int64
-	ThreadID        int64
-	Timer           time.Duration
+	Name                 string
+	Mode                 string
+	Argument             PrivateValue
+	TargetMessageID      int64
+	ThreadID             int64
+	Timer                time.Duration
+	OperationID          PrivateValue
+	ConfirmDuplicateRisk bool
 }
 
 func (p Policy) parseCommand(in Input) Decision {
@@ -82,6 +84,12 @@ func (p Policy) parseCommand(in Input) Decision {
 		}
 		command.ThreadID = in.ThreadID
 		command.Argument = privateValue(label)
+	case "retry":
+		if len(fields) != 3 || !operationID(fields[1]) || fields[2] != "confirm" {
+			return invalidCommand()
+		}
+		command.OperationID = privateValue(fields[1])
+		command.ConfirmDuplicateRisk = true
 	case "pair":
 		if len(fields) == 2 && fields[1] == "qr" {
 			command.Mode = "qr"
@@ -132,6 +140,22 @@ func validLabel(value string) bool {
 		}
 	}
 	return true
+}
+
+func operationID(value string) bool {
+	if len(value) < 1 || len(value) > 128 || !asciiAlphanumeric(value[0]) {
+		return false
+	}
+	for i := 1; i < len(value); i++ {
+		if !asciiAlphanumeric(value[i]) && value[i] != '_' && value[i] != '-' {
+			return false
+		}
+	}
+	return true
+}
+
+func asciiAlphanumeric(value byte) bool {
+	return value >= 'a' && value <= 'z' || value >= 'A' && value <= 'Z' || value >= '0' && value <= '9'
 }
 
 func invalidCommand() Decision {
