@@ -120,6 +120,12 @@ func (e Event) Validate() error {
 	if !e.Source.Valid() || !bounded(e.Key, 512) || !bounded(string(e.Kind), 64) || !bounded(e.Chat, 256) || !bounded(e.Actor, 256) || e.Version.Validate() != nil || len(e.Metadata)+len(e.Raw) > MaxEventBytes {
 		return ErrInvalid
 	}
+	switch e.Kind {
+	case MessageCreate, MessageEdit, MessageRevoke, ReactionSet, MessageKeep:
+		if e.Target == nil {
+			return ErrInvalid
+		}
+	}
 	if e.Target != nil && (e.Target.Validate() != nil || e.Target.Platform != e.Source || e.Target.Chat != e.Chat) {
 		return ErrInvalid
 	}
@@ -145,9 +151,14 @@ func (t TextContent) Validate() error {
 	if t.ReplyTo != nil && t.ReplyTo.Validate() != nil {
 		return ErrInvalid
 	}
-	n := len(utf16.Encode([]rune(t.Text)))
+	encoded := utf16.Encode([]rune(t.Text))
+	n := len(encoded)
 	for _, e := range t.Entities {
 		if !bounded(e.Kind, 64) || e.StartUTF16 < 0 || e.LengthUTF16 <= 0 || e.StartUTF16 > n || e.LengthUTF16 > n-e.StartUTF16 || len(e.URL) > 4096 || len(e.Mention) > 256 {
+			return ErrInvalid
+		}
+		end := e.StartUTF16 + e.LengthUTF16
+		if (e.StartUTF16 > 0 && e.StartUTF16 < n && encoded[e.StartUTF16] >= 0xDC00 && encoded[e.StartUTF16] <= 0xDFFF) || (end < n && encoded[end] >= 0xDC00 && encoded[end] <= 0xDFFF) {
 			return ErrInvalid
 		}
 	}

@@ -84,6 +84,22 @@ func TestSensitiveTypesDoNotLeakThroughStructuredLogging(t *testing.T) {
 	}
 }
 
+func TestMessageOperationsRequireContextAndValidUTF16Boundaries(t *testing.T) {
+	e := Event{Key: "key", Source: Telegram, Kind: MessageEdit, Chat: "-100", Actor: "42", Version: SourceVersion{Kind: "tg", Digest: "digest", StreamEpoch: "epoch"}}
+	if !errors.Is(e.Validate(), ErrInvalid) {
+		t.Fatal("targetless edit admitted")
+	}
+	content := TextContent{Text: "🙂", Entities: []TextEntity{{Kind: "bold", StartUTF16: 1, LengthUTF16: 1}}}
+	if !errors.Is(content.Validate(), ErrInvalid) {
+		t.Fatal("entity split surrogate pair")
+	}
+	content.Entities[0].StartUTF16 = 0
+	content.Entities[0].LengthUTF16 = 2
+	if err := content.Validate(); err != nil {
+		t.Fatal("valid UTF16 span rejected", err)
+	}
+}
+
 func TestPartValidatesOwnershipRoleAndCapabilities(t *testing.T) {
 	p := DeliveredPart{Ref: MessageRef{Platform: Telegram, Chat: "-100", Author: "bot", ID: "1"}, Role: RolePrimary, BridgeOwned: true, Capabilities: CanEditText | CanDelete}
 	if err := p.Validate(); err != nil {
