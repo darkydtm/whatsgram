@@ -1,7 +1,9 @@
 package config
 
 import (
+	"bytes"
 	"errors"
+	"io"
 	"os"
 	"strings"
 
@@ -11,12 +13,26 @@ import (
 func Load(path string, lookup func(string) (string, bool)) (Config, error) {
 	c := Default()
 	if path != "" {
-		data, err := os.ReadFile(path)
+		file, err := os.Open(path)
 		if err != nil {
 			return Config{}, errors.New("cannot read configuration")
 		}
-		if err := yaml.Unmarshal(data, &c); err != nil {
+		data, err := io.ReadAll(io.LimitReader(file, 1024*1024+1))
+		file.Close()
+		if err != nil {
+			return Config{}, errors.New("cannot read configuration")
+		}
+		if len(data) > 1024*1024 {
+			return Config{}, errors.New("configuration exceeds size limit")
+		}
+		decoder := yaml.NewDecoder(bytes.NewReader(data))
+		decoder.KnownFields(true)
+		if err := decoder.Decode(&c); err != nil {
 			return Config{}, errors.New("invalid configuration YAML")
+		}
+		var extra yaml.Node
+		if err := decoder.Decode(&extra); err != io.EOF {
+			return Config{}, errors.New("invalid trailing configuration YAML")
 		}
 	}
 	if err := c.Validate(); err != nil {
