@@ -20,25 +20,32 @@ import (
 )
 
 type Options struct {
-	Logger        *slog.Logger
-	Now           func() time.Time
-	LookupMessage func(context.Context, domain.MessageRef) (MessageMetadata, error)
-	OperationTime func(context.Context, string) (time.Time, error)
+	Logger             *slog.Logger
+	Now                func() time.Time
+	LookupMessage      func(context.Context, domain.MessageRef) (MessageMetadata, error)
+	OperationTime      func(context.Context, string) (time.Time, error)
+	ReconnectBase      time.Duration
+	ReconnectMax       time.Duration
+	MaxConnectAttempts int
 }
 
 type networkClient interface {
 	IsConnected() bool
 	IsLoggedIn() bool
+	ConnectContext(context.Context) error
+	Disconnect()
 	SendMessage(context.Context, types.JID, *waE2E.Message, ...whatsmeow.SendRequestExtra) (whatsmeow.SendResponse, error)
 }
 
 type Client struct {
-	client  *whatsmeow.Client
-	network networkClient
-	device  *store.Device
-	logger  *slog.Logger
-	mu      sync.Mutex
-	options Options
+	client   *whatsmeow.Client
+	network  networkClient
+	device   *store.Device
+	logger   *slog.Logger
+	mu       sync.Mutex
+	options  Options
+	running  bool
+	terminal string
 }
 
 func New(ctx context.Context, device *store.Device, options Options) (*Client, error) {
@@ -61,6 +68,18 @@ func New(ctx context.Context, device *store.Device, options Options) (*Client, e
 	cli.BackgroundEventCtx = privateContext(ctx)
 	if options.Now == nil {
 		options.Now = time.Now
+	}
+	if options.ReconnectBase == 0 {
+		options.ReconnectBase = time.Second
+	}
+	if options.ReconnectMax == 0 {
+		options.ReconnectMax = time.Minute
+	}
+	if options.MaxConnectAttempts == 0 {
+		options.MaxConnectAttempts = 5
+	}
+	if options.ReconnectBase < time.Millisecond || options.ReconnectMax < options.ReconnectBase || options.ReconnectMax > 5*time.Minute || options.MaxConnectAttempts < 1 || options.MaxConnectAttempts > 20 {
+		return nil, adapterError(domain.Permanent, "invalid_target")
 	}
 	return &Client{client: cli, network: cli, device: device, logger: logger, options: options}, nil
 }
@@ -150,6 +169,12 @@ func (c *Client) SendText(ctx context.Context, request domain.SendTextRequest) (
 }
 
 func (c *Client) send(ctx context.Context, chat types.JID, message *waE2E.Message, id string) (whatsmeow.SendResponse, error) {
+	c.mu.Lock()
+	terminal := c.terminal
+	c.mu.Unlock()
+	if terminal != "" {
+		return whatsmeow.SendResponse{}, adapterError(domain.Permanent, "invalid_target")
+	}
 	if ctx.Err() != nil {
 		return whatsmeow.SendResponse{}, adapterError(domain.Transient, "not_connected")
 	}
