@@ -341,6 +341,13 @@ func (s *Store) insertDelivery(ctx context.Context, tx *sql.Tx, inboxID int64, d
 	if d.Platform == domain.WhatsApp && (d.WhatsAppSendID == "" || d.EchoActor == "" || len(d.EchoActor) > 256) {
 		return ErrInvalid
 	}
+	if d.Target != nil && d.Platform == domain.Telegram {
+		var topicGen sql.NullInt64
+		err := tx.QueryRowContext(ctx, "SELECT topic_generation FROM bridge_part WHERE message_id=? AND platform=? AND remote_chat=? AND remote_author=? AND remote_id=?", d.MessageID, d.Target.Platform, d.Target.Chat, d.Target.Author, d.Target.ID).Scan(&topicGen)
+		if err == nil && topicGen.Valid && topicGen.Int64 != d.TopicGeneration {
+			return ErrConflict
+		}
+	}
 	var generation int64
 	var state ChatState
 	if err := tx.QueryRowContext(ctx, "SELECT topic_generation,state FROM bridge_chat WHERE id=?", d.ChatID).Scan(&generation, &state); err != nil {

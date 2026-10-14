@@ -54,7 +54,7 @@ type queryer interface {
 }
 
 func readParts(ctx context.Context, q queryer, messageID int64) ([]domain.DeliveredPart, error) {
-	rows, err := q.QueryContext(ctx, "SELECT platform,remote_chat,remote_author,remote_id,part_index,role,is_bridge_owned,capabilities,deleted,retired FROM bridge_part WHERE message_id=? ORDER BY platform,part_index", messageID)
+	rows, err := q.QueryContext(ctx, "SELECT platform,remote_chat,remote_author,remote_id,part_index,role,is_bridge_owned,capabilities,COALESCE(topic_generation,0),deleted,retired FROM bridge_part WHERE message_id=? ORDER BY platform,part_index", messageID)
 	if err != nil {
 		return nil, safe(err)
 	}
@@ -62,7 +62,7 @@ func readParts(ctx context.Context, q queryer, messageID int64) ([]domain.Delive
 	parts := []domain.DeliveredPart{}
 	for rows.Next() {
 		var p domain.DeliveredPart
-		if err := rows.Scan(&p.Ref.Platform, &p.Ref.Chat, &p.Ref.Author, &p.Ref.ID, &p.Index, &p.Role, &p.BridgeOwned, &p.Capabilities, &p.Deleted, &p.Retired); err != nil {
+		if err := rows.Scan(&p.Ref.Platform, &p.Ref.Chat, &p.Ref.Author, &p.Ref.ID, &p.Index, &p.Role, &p.BridgeOwned, &p.Capabilities, &p.TopicGeneration, &p.Deleted, &p.Retired); err != nil {
 			return nil, safe(err)
 		}
 		parts = append(parts, p)
@@ -76,7 +76,7 @@ func (s *Store) Part(ctx context.Context, ref domain.MessageRef) (domain.Deliver
 	}
 	var p domain.DeliveredPart
 	p.Ref = ref
-	err := s.db.QueryRowContext(ctx, "SELECT part_index,role,is_bridge_owned,capabilities,deleted,retired FROM bridge_part WHERE platform=? AND remote_chat=? AND remote_author=? AND remote_id=?", ref.Platform, ref.Chat, ref.Author, ref.ID).Scan(&p.Index, &p.Role, &p.BridgeOwned, &p.Capabilities, &p.Deleted, &p.Retired)
+	err := s.db.QueryRowContext(ctx, "SELECT part_index,role,is_bridge_owned,capabilities,COALESCE(topic_generation,0),deleted,retired FROM bridge_part WHERE platform=? AND remote_chat=? AND remote_author=? AND remote_id=?", ref.Platform, ref.Chat, ref.Author, ref.ID).Scan(&p.Index, &p.Role, &p.BridgeOwned, &p.Capabilities, &p.TopicGeneration, &p.Deleted, &p.Retired)
 	if err == sql.ErrNoRows {
 		return domain.DeliveredPart{}, ErrNoWork
 	}

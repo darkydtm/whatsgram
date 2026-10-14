@@ -232,13 +232,14 @@ const (
 )
 
 type DeliveredPart struct {
-	Ref          MessageRef
-	Index        int
-	Role         string
-	BridgeOwned  bool
-	Capabilities uint64
-	Deleted      bool
-	Retired      bool
+	Ref             MessageRef
+	Index           int
+	Role            string
+	BridgeOwned     bool
+	Capabilities    uint64
+	TopicGeneration int64
+	Deleted         bool
+	Retired         bool
 }
 
 func (p DeliveredPart) Validate() error {

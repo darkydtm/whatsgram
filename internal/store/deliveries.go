@@ -131,12 +131,16 @@ func (s *Store) BeginSend(ctx context.Context, id int64, token string, now time.
 	if d.Target != nil {
 		var owned, deleted, retired bool
 		var caps uint64
-		err := tx.QueryRowContext(ctx, "SELECT is_bridge_owned,deleted,retired,capabilities FROM bridge_part WHERE message_id=? AND platform=? AND remote_chat=? AND remote_author=? AND remote_id=?", d.MessageID, d.Target.Platform, d.Target.Chat, d.Target.Author, d.Target.ID).Scan(&owned, &deleted, &retired, &caps)
+		var topicGen sql.NullInt64
+		err := tx.QueryRowContext(ctx, "SELECT is_bridge_owned,deleted,retired,capabilities,topic_generation FROM bridge_part WHERE message_id=? AND platform=? AND remote_chat=? AND remote_author=? AND remote_id=?", d.MessageID, d.Target.Platform, d.Target.Chat, d.Target.Author, d.Target.ID).Scan(&owned, &deleted, &retired, &caps, &topicGen)
 		if err == sql.ErrNoRows {
 			return ErrConflict
 		}
 		if err != nil {
 			return safe(err)
+		}
+		if d.Platform == domain.Telegram && topicGen.Valid && topicGen.Int64 != d.TopicGeneration {
+			return ErrConflict
 		}
 		if retired || ((d.Kind == "message.edit" || d.Kind == "reaction.set") && deleted) {
 			return ErrConflict
