@@ -3,6 +3,7 @@ package coordinator
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/darkydtm/whatsgram/internal/admin"
@@ -30,6 +31,8 @@ func (a *AdminExecutor) Execute(ctx context.Context, cmd admin.ParsedCommand, in
 		return a.handleSync(ctx, in)
 	case "bind":
 		return a.handleBind(ctx, cmd, in)
+	case "del":
+		return a.handleDel(ctx, cmd, in, e)
 	default:
 		return a.coord.reply(ctx, in, fmt.Sprintf("Command /%s is not supported", cmd.Name))
 	}
@@ -189,6 +192,67 @@ func (a *AdminExecutor) handleBind(ctx context.Context, cmd admin.ParsedCommand,
 
 	a.coord.activeChatCount.Add(1)
 	return a.coord.reply(ctx, in, fmt.Sprintf("Successfully bound topic %d to %s", topicID, jid))
+}
+
+func (a *AdminExecutor) handleDel(ctx context.Context, cmd admin.ParsedCommand, in admin.Input, e domain.Event) error {
+	if cmd.TargetMessageID <= 0 {
+		return a.coord.reply(ctx, in, "Please reply to the message you want to delete.")
+	}
+
+	targetIDStr := strconv.FormatInt(cmd.TargetMessageID, 10)
+	parts, err := a.coord.store.FindPartsByRemote(ctx, domain.Telegram, e.Chat, targetIDStr)
+	if err != nil {
+		return a.coord.reply(ctx, in, "Message not found or not tracked by bridge.")
+	}
+
+	var tgPart *domain.DeliveredPart
+	var waPart *domain.DeliveredPart
+	for i := range parts {
+		if parts[i].Ref.Platform == domain.Telegram && parts[i].Ref.ID == targetIDStr {
+			tgPart = &parts[i]
+		} else if parts[i].Ref.Platform == domain.WhatsApp {
+			waPart = &parts[i]
+		}
+	}
+	if tgPart == nil {
+		for i := range parts {
+			if parts[i].Ref.Platform == domain.Telegram {
+				tgPart = &parts[i]
+				break
+			}
+		}
+	}
+	if tgPart == nil {
+		return a.coord.reply(ctx, in, "Telegram message part not found.")
+	}
+
+	originAuthorID, _ := strconv.ParseInt(tgPart.Ref.Author, 10, 64)
+	isDriver := a.coord.policy.CanDriveAccount(in.UserID)
+	if !a.coord.policy.CanMutateOriginal(in.UserID, originAuthorID, isDriver) {
+		return a.coord.reply(ctx, in, "Permission denied: you cannot delete this message.")
+	}
+
+	msgState, err := a.coord.store.Message(ctx, tgPart.Ref)
+	if err == nil && !msgState.CreatedAt.IsZero() && time.Since(msgState.CreatedAt) > 60*time.Hour {
+		return a.coord.reply(ctx, in, "Cannot revoke: message is older than 60 hours.")
+	}
+
+	if waPart != nil {
+		sendID := a.coord.waPort.AllocateSendID()
+		a.coord.recordBridgeSend(sendID)
+		_ = a.coord.waPort.Revoke(ctx, waPart.Ref, sendID)
+	}
+
+	_ = a.coord.tgPort.Delete(ctx, tgPart.Ref)
+	if e.Target != nil {
+		_ = a.coord.tgPort.Delete(ctx, *e.Target)
+	}
+
+	if msgState.ID > 0 {
+		_ = a.coord.store.TombstoneMessage(ctx, msgState.ID)
+	}
+
+	return nil
 }
 
 func (c *Coordinator) reply(ctx context.Context, in admin.Input, text string) error {

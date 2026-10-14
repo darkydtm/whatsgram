@@ -24,7 +24,11 @@ type Store interface {
 	ChatByTopic(ctx context.Context, telegramChatID, threadID int64) (store.Chat, error)
 	QuarantineInbox(ctx context.Context, id int64, token string, now time.Time) error
 	DeferInbox(ctx context.Context, id int64, token string, availableAt, now time.Time) error
+	CompleteInbox(ctx context.Context, id int64, token string, now time.Time) error
 	MatchEcho(ctx context.Context, echo store.Echo) (bool, error)
+	Message(ctx context.Context, ref domain.MessageRef) (store.MessageState, error)
+	FindPartsByRemote(ctx context.Context, platform domain.Platform, chat, id string) ([]domain.DeliveredPart, error)
+	TombstoneMessage(ctx context.Context, messageID int64) error
 }
 
 type Options struct {

@@ -3,6 +3,7 @@ package coordinator
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strconv"
 	"time"
 
@@ -109,34 +110,170 @@ func (c *Coordinator) sendTelegram(ctx context.Context, delivery domain.Delivery
 		}
 	}
 
-	content := domain.TextContent{}
-	if delivery.Text != nil {
-		content = c.resolveReplyTo(ctx, domain.Telegram, *delivery.Text)
-	}
+	switch delivery.Kind {
+	case "message.create":
+		content := domain.TextContent{}
+		if delivery.Text != nil {
+			content = c.resolveReplyTo(ctx, domain.Telegram, *delivery.Text)
+		}
 
-	req := domain.SendTextRequest{
-		OperationKey:  delivery.OperationKey,
-		TelegramTopic: topic,
-		Content:       content,
-	}
+		req := domain.SendTextRequest{
+			OperationKey:  delivery.OperationKey,
+			TelegramTopic: topic,
+			Content:       content,
+		}
 
-	return c.tgPort.SendText(ctx, req)
+		return c.tgPort.SendText(ctx, req)
+
+	case "message.edit":
+		if delivery.Target == nil {
+			return domain.SendResult{}, domain.AdapterError{Class: domain.Permanent, Code: "invalid_target"}
+		}
+		content := domain.TextContent{}
+		if delivery.Text != nil {
+			content = c.resolveReplyTo(ctx, domain.Telegram, *delivery.Text)
+		}
+		part, err := c.store.Part(ctx, *delivery.Target)
+		canEdit := err == nil && part.BridgeOwned && (part.Capabilities&domain.CanEditText != 0)
+		if canEdit {
+			editErr := c.tgPort.EditText(ctx, *delivery.Target, content)
+			if editErr == nil {
+				return domain.SendResult{AcceptedAt: time.Now().UTC()}, nil
+			}
+			if errors.Is(editErr, context.Canceled) || errors.Is(editErr, context.DeadlineExceeded) {
+				return domain.SendResult{}, editErr
+			}
+		}
+
+		// Fallback notice when Telegram representation cannot be edited
+		noticeText := fmt.Sprintf("✏️ Message edited: %s", content.Text)
+		req := domain.SendTextRequest{
+			OperationKey:  delivery.OperationKey,
+			TelegramTopic: topic,
+			Content: domain.TextContent{
+				Text:    noticeText,
+				ReplyTo: delivery.Target,
+			},
+		}
+		res, sendErr := c.tgPort.SendText(ctx, req)
+		if sendErr != nil {
+			return domain.SendResult{}, sendErr
+		}
+		if len(res.Parts) > 0 {
+			existingParts, _ := c.store.FindParts(ctx, *delivery.Target)
+			res.Parts[0].Index = len(existingParts)
+			res.Parts[0].Role = domain.RoleRevisionNotice
+		}
+		return res, nil
+
+	case "message.revoke":
+		if delivery.Target == nil {
+			return domain.SendResult{}, domain.AdapterError{Class: domain.Permanent, Code: "invalid_target"}
+		}
+		delErr := c.tgPort.Delete(ctx, *delivery.Target)
+		if delErr == nil {
+			return domain.SendResult{AcceptedAt: time.Now().UTC()}, nil
+		}
+		if errors.Is(delErr, context.Canceled) || errors.Is(delErr, context.DeadlineExceeded) {
+			return domain.SendResult{}, delErr
+		}
+
+		// If deletion fails (too old or rights lost): post notification "🗑 Message revoked by sender"
+		req := domain.SendTextRequest{
+			OperationKey:  delivery.OperationKey,
+			TelegramTopic: topic,
+			Content: domain.TextContent{
+				Text:    "🗑 Message revoked by sender",
+				ReplyTo: delivery.Target,
+			},
+		}
+		res, sendErr := c.tgPort.SendText(ctx, req)
+		if sendErr != nil {
+			return domain.SendResult{}, delErr
+		}
+		if len(res.Parts) > 0 {
+			existingParts, _ := c.store.FindParts(ctx, *delivery.Target)
+			res.Parts[0].Index = len(existingParts)
+			res.Parts[0].Role = domain.RoleFallback
+		}
+		return res, nil
+
+	case "reaction.set":
+		if delivery.Target == nil {
+			return domain.SendResult{}, domain.AdapterError{Class: domain.Permanent, Code: "invalid_target"}
+		}
+		emoji := ""
+		if delivery.Text != nil {
+			emoji = delivery.Text.Text
+		}
+		if err := c.tgPort.SetOwnReaction(ctx, *delivery.Target, emoji); err != nil {
+			return domain.SendResult{}, err
+		}
+		return domain.SendResult{AcceptedAt: time.Now().UTC()}, nil
+
+	default:
+		return domain.SendResult{}, domain.AdapterError{Class: domain.Permanent, Code: "invalid_target"}
+	}
 }
 
 func (c *Coordinator) sendWhatsApp(ctx context.Context, delivery domain.Delivery) (domain.SendResult, error) {
-	content := domain.TextContent{}
-	if delivery.Text != nil {
-		content = c.resolveReplyTo(ctx, domain.WhatsApp, *delivery.Text)
-	}
+	switch delivery.Kind {
+	case "message.create":
+		content := domain.TextContent{}
+		if delivery.Text != nil {
+			content = c.resolveReplyTo(ctx, domain.WhatsApp, *delivery.Text)
+		}
 
-	req := domain.SendTextRequest{
-		OperationKey:   delivery.OperationKey,
-		WhatsAppSendID: delivery.WhatsAppSendID,
-		WhatsAppChat:   delivery.EchoActor,
-		Content:        content,
-	}
+		req := domain.SendTextRequest{
+			OperationKey:   delivery.OperationKey,
+			WhatsAppSendID: delivery.WhatsAppSendID,
+			WhatsAppChat:   delivery.EchoActor,
+			Content:        content,
+		}
 
-	return c.waPort.SendText(ctx, req)
+		return c.waPort.SendText(ctx, req)
+
+	case "message.edit":
+		if delivery.Target == nil {
+			return domain.SendResult{}, domain.AdapterError{Class: domain.Permanent, Code: "invalid_target"}
+		}
+		content := domain.TextContent{}
+		if delivery.Text != nil {
+			content = c.resolveReplyTo(ctx, domain.WhatsApp, *delivery.Text)
+		}
+		err := c.waPort.EditOwnText(ctx, *delivery.Target, content, delivery.WhatsAppSendID)
+		if err != nil {
+			return domain.SendResult{}, err
+		}
+		return domain.SendResult{AcceptedAt: time.Now().UTC()}, nil
+
+	case "message.revoke":
+		if delivery.Target == nil {
+			return domain.SendResult{}, domain.AdapterError{Class: domain.Permanent, Code: "invalid_target"}
+		}
+		err := c.waPort.Revoke(ctx, *delivery.Target, delivery.WhatsAppSendID)
+		if err != nil {
+			return domain.SendResult{}, err
+		}
+		return domain.SendResult{AcceptedAt: time.Now().UTC()}, nil
+
+	case "reaction.set":
+		if delivery.Target == nil {
+			return domain.SendResult{}, domain.AdapterError{Class: domain.Permanent, Code: "invalid_target"}
+		}
+		emoji := ""
+		if delivery.Text != nil {
+			emoji = delivery.Text.Text
+		}
+		err := c.waPort.SetOwnReaction(ctx, *delivery.Target, emoji, delivery.WhatsAppSendID)
+		if err != nil {
+			return domain.SendResult{}, err
+		}
+		return domain.SendResult{AcceptedAt: time.Now().UTC()}, nil
+
+	default:
+		return domain.SendResult{}, domain.AdapterError{Class: domain.Permanent, Code: "invalid_target"}
+	}
 }
 
 func (c *Coordinator) resolveReplyTo(ctx context.Context, targetPlatform domain.Platform, content domain.TextContent) domain.TextContent {

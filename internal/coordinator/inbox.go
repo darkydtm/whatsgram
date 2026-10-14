@@ -87,6 +87,148 @@ func (c *Coordinator) handleTelegramEvent(ctx context.Context, e domain.Event, t
 		return c.completeInbox(ctx, e, token, now)
 	}
 
+	retryDelay := c.cfg.Runtime.RetryBase
+	if retryDelay <= 0 {
+		retryDelay = 100 * time.Millisecond
+	}
+
+	if e.Kind == "telegram.reaction" || e.Kind == domain.ReactionSet {
+		actorID, _ := strconv.ParseInt(e.Actor, 10, 64)
+		if !c.policy.CanDriveAccount(actorID) {
+			return c.completeInbox(ctx, e, token, now)
+		}
+
+		targetID := ""
+		emoji := ""
+		if e.Target != nil {
+			targetID = e.Target.ID
+		}
+		if e.Text != nil {
+			emoji = e.Text.Text
+		}
+		if targetID == "" && len(e.Raw) > 0 {
+			var update models.Update
+			if json.Unmarshal(e.Raw, &update) == nil && update.MessageReaction != nil {
+				targetID = strconv.Itoa(update.MessageReaction.MessageID)
+				for _, rx := range update.MessageReaction.NewReaction {
+					if rx.Type == models.ReactionTypeTypeEmoji && rx.ReactionTypeEmoji != nil {
+						emoji = rx.ReactionTypeEmoji.Emoji
+						break
+					}
+				}
+			}
+		}
+		if targetID == "" {
+			return c.completeInbox(ctx, e, token, now)
+		}
+
+		parts, err := c.store.FindPartsByRemote(ctx, domain.Telegram, e.Chat, targetID)
+		if err != nil {
+			return c.store.DeferInbox(ctx, e.InboxID, token, now.Add(retryDelay), now)
+		}
+
+		var waPart *domain.DeliveredPart
+		for i := range parts {
+			if parts[i].Ref.Platform == domain.WhatsApp && !parts[i].Deleted {
+				waPart = &parts[i]
+				break
+			}
+		}
+		if waPart == nil {
+			return c.completeInbox(ctx, e, token, now)
+		}
+
+		sendID := c.waPort.AllocateSendID()
+		c.recordBridgeSend(sendID)
+
+		if e.Target == nil {
+			if err := c.waPort.SetOwnReaction(ctx, waPart.Ref, emoji, sendID); err != nil {
+				return err
+			}
+			return c.completeInbox(ctx, e, token, now)
+		}
+
+		delivery := domain.Delivery{
+			OperationKey:    fmt.Sprintf("tg:reaction:%d:%s", e.InboxID, sendID),
+			Platform:        domain.WhatsApp,
+			Kind:            "reaction.set",
+			ChatID:          chat.ID,
+			TopicGeneration: chat.Generation,
+			ExpectedVersion: e.Version,
+			Target:          &waPart.Ref,
+			Text:            &domain.TextContent{Text: emoji},
+			WhatsAppSendID:  sendID,
+			EchoActor:       chat.WhatsAppJID,
+		}
+
+		c.pendingCount.Add(1)
+		return c.store.PlanEvent(ctx, e, token, []domain.Delivery{delivery}, now)
+	}
+
+	if e.Kind == domain.MessageEdit {
+		if e.Target == nil {
+			return c.completeInbox(ctx, e, token, now)
+		}
+
+		parts, err := c.store.FindParts(ctx, *e.Target)
+		if err != nil {
+			return c.store.DeferInbox(ctx, e.InboxID, token, now.Add(retryDelay), now)
+		}
+
+		var waPart *domain.DeliveredPart
+		for i := range parts {
+			if parts[i].Ref.Platform == domain.WhatsApp && !parts[i].Deleted {
+				waPart = &parts[i]
+				break
+			}
+		}
+		if waPart == nil {
+			return c.completeInbox(ctx, e, token, now)
+		}
+
+		msgState, err := c.store.Message(ctx, *e.Target)
+		if err == nil {
+			if msgState.Tombstone {
+				return c.completeInbox(ctx, e, token, now)
+			}
+			if !msgState.CreatedAt.IsZero() && now.Sub(msgState.CreatedAt) > 15*time.Minute {
+				return c.completeInbox(ctx, e, token, now)
+			}
+		}
+
+		textContent := e.Text
+		if textContent == nil && rawText != "" {
+			textContent = &domain.TextContent{Text: rawText}
+		}
+		if textContent == nil {
+			return c.completeInbox(ctx, e, token, now)
+		}
+
+		if textContent.ReplyTo != nil && textContent.ReplyTo.Platform != domain.WhatsApp {
+			resolved := c.resolveReplyTo(ctx, domain.WhatsApp, *textContent)
+			textContent = &resolved
+		}
+
+		sendID := c.waPort.AllocateSendID()
+		c.recordBridgeSend(sendID)
+
+		delivery := domain.Delivery{
+			OperationKey:    fmt.Sprintf("tg:edit:%d:%s", e.InboxID, sendID),
+			Platform:        domain.WhatsApp,
+			Kind:            "message.edit",
+			ChatID:          chat.ID,
+			TopicGeneration: chat.Generation,
+			ExpectedVersion: e.Version,
+			Target:          &waPart.Ref,
+			Text:            textContent,
+			WhatsAppSendID:  sendID,
+			EchoActor:       chat.WhatsAppJID,
+		}
+
+		c.pendingCount.Add(1)
+		return c.store.PlanEvent(ctx, e, token, []domain.Delivery{delivery}, now)
+	}
+
 	textContent := e.Text
 	if textContent == nil && rawText != "" {
 		textContent = &domain.TextContent{Text: rawText}
@@ -131,12 +273,35 @@ func (c *Coordinator) handleWhatsAppEvent(ctx context.Context, e domain.Event, t
 		targetID = e.Target.ID
 	}
 
-	if isFromMe {
-		if c.isBridgeDispatched(ctx, e, targetID) {
+	if isFromMe && c.isBridgeDispatched(ctx, e, targetID) {
+		return c.completeInbox(ctx, e, token, now)
+	}
+
+	retryDelay := c.cfg.Runtime.RetryBase
+	if retryDelay <= 0 {
+		retryDelay = 100 * time.Millisecond
+	}
+
+	switch e.Kind {
+	case domain.MessageEdit:
+		if e.Target == nil {
 			return c.completeInbox(ctx, e, token, now)
 		}
-
-		formatted := formatWhatsAppText(e, true)
+		parts, err := c.store.FindParts(ctx, *e.Target)
+		if err != nil {
+			return c.store.DeferInbox(ctx, e.InboxID, token, now.Add(retryDelay), now)
+		}
+		var tgPart *domain.DeliveredPart
+		for i := range parts {
+			if parts[i].Ref.Platform == domain.Telegram && !parts[i].Deleted {
+				tgPart = &parts[i]
+				break
+			}
+		}
+		if tgPart == nil {
+			return c.completeInbox(ctx, e, token, now)
+		}
+		formatted := formatWhatsAppText(e, isFromMe)
 		if formatted == nil {
 			return c.completeInbox(ctx, e, token, now)
 		}
@@ -146,7 +311,104 @@ func (c *Coordinator) handleWhatsAppEvent(ctx context.Context, e domain.Event, t
 		}
 
 		delivery := domain.Delivery{
-			OperationKey:    fmt.Sprintf("wa:owner:%d:%s", e.InboxID, e.Key),
+			OperationKey:    fmt.Sprintf("wa:edit:%d:%s", e.InboxID, e.Key),
+			Platform:        domain.Telegram,
+			Kind:            "message.edit",
+			ChatID:          chat.ID,
+			TopicGeneration: chat.Generation,
+			ExpectedVersion: e.Version,
+			Target:          &tgPart.Ref,
+			Text:            formatted,
+			EchoActor:       chat.WhatsAppJID,
+		}
+
+		c.pendingCount.Add(1)
+		return c.store.PlanEvent(ctx, e, token, []domain.Delivery{delivery}, now)
+
+	case domain.MessageRevoke:
+		if e.Target == nil {
+			return c.completeInbox(ctx, e, token, now)
+		}
+		parts, err := c.store.FindParts(ctx, *e.Target)
+		if err != nil {
+			return c.store.DeferInbox(ctx, e.InboxID, token, now.Add(retryDelay), now)
+		}
+		var tgPart *domain.DeliveredPart
+		for i := range parts {
+			if parts[i].Ref.Platform == domain.Telegram && !parts[i].Deleted {
+				tgPart = &parts[i]
+				break
+			}
+		}
+		if tgPart == nil {
+			return c.completeInbox(ctx, e, token, now)
+		}
+
+		delivery := domain.Delivery{
+			OperationKey:    fmt.Sprintf("wa:revoke:%d:%s", e.InboxID, e.Key),
+			Platform:        domain.Telegram,
+			Kind:            "message.revoke",
+			ChatID:          chat.ID,
+			TopicGeneration: chat.Generation,
+			ExpectedVersion: e.Version,
+			Target:          &tgPart.Ref,
+			EchoActor:       chat.WhatsAppJID,
+		}
+
+		c.pendingCount.Add(1)
+		return c.store.PlanEvent(ctx, e, token, []domain.Delivery{delivery}, now)
+
+	case domain.ReactionSet:
+		if e.Target == nil {
+			return c.completeInbox(ctx, e, token, now)
+		}
+		parts, err := c.store.FindParts(ctx, *e.Target)
+		if err != nil {
+			return c.store.DeferInbox(ctx, e.InboxID, token, now.Add(retryDelay), now)
+		}
+		var tgPart *domain.DeliveredPart
+		for i := range parts {
+			if parts[i].Ref.Platform == domain.Telegram && !parts[i].Deleted {
+				tgPart = &parts[i]
+				break
+			}
+		}
+		if tgPart == nil {
+			return c.completeInbox(ctx, e, token, now)
+		}
+
+		delivery := domain.Delivery{
+			OperationKey:    fmt.Sprintf("wa:reaction:%d:%s", e.InboxID, e.Key),
+			Platform:        domain.Telegram,
+			Kind:            "reaction.set",
+			ChatID:          chat.ID,
+			TopicGeneration: chat.Generation,
+			ExpectedVersion: e.Version,
+			Target:          &tgPart.Ref,
+			Text:            e.Text,
+			EchoActor:       chat.WhatsAppJID,
+		}
+
+		c.pendingCount.Add(1)
+		return c.store.PlanEvent(ctx, e, token, []domain.Delivery{delivery}, now)
+
+	default:
+		formatted := formatWhatsAppText(e, isFromMe)
+		if formatted == nil {
+			return c.completeInbox(ctx, e, token, now)
+		}
+		if formatted.ReplyTo != nil && formatted.ReplyTo.Platform != domain.Telegram {
+			resolved := c.resolveReplyTo(ctx, domain.Telegram, *formatted)
+			formatted = &resolved
+		}
+
+		opKey := fmt.Sprintf("wa:%d:%s", e.InboxID, e.Key)
+		if isFromMe {
+			opKey = fmt.Sprintf("wa:owner:%d:%s", e.InboxID, e.Key)
+		}
+
+		delivery := domain.Delivery{
+			OperationKey:    opKey,
 			Platform:        domain.Telegram,
 			Kind:            "message.create",
 			ChatID:          chat.ID,
@@ -159,29 +421,6 @@ func (c *Coordinator) handleWhatsAppEvent(ctx context.Context, e domain.Event, t
 		c.pendingCount.Add(1)
 		return c.store.PlanEvent(ctx, e, token, []domain.Delivery{delivery}, now)
 	}
-
-	formatted := formatWhatsAppText(e, false)
-	if formatted == nil {
-		return c.completeInbox(ctx, e, token, now)
-	}
-	if formatted.ReplyTo != nil && formatted.ReplyTo.Platform != domain.Telegram {
-		resolved := c.resolveReplyTo(ctx, domain.Telegram, *formatted)
-		formatted = &resolved
-	}
-
-	delivery := domain.Delivery{
-		OperationKey:    fmt.Sprintf("wa:%d:%s", e.InboxID, e.Key),
-		Platform:        domain.Telegram,
-		Kind:            "message.create",
-		ChatID:          chat.ID,
-		TopicGeneration: chat.Generation,
-		ExpectedVersion: e.Version,
-		Text:            formatted,
-		EchoActor:       chat.WhatsAppJID,
-	}
-
-	c.pendingCount.Add(1)
-	return c.store.PlanEvent(ctx, e, token, []domain.Delivery{delivery}, now)
 }
 
 func (c *Coordinator) isBridgeDispatched(ctx context.Context, e domain.Event, targetID string) bool {
@@ -213,6 +452,9 @@ func (c *Coordinator) isBridgeDispatched(ctx context.Context, e domain.Event, ta
 func (c *Coordinator) completeInbox(ctx context.Context, e domain.Event, token string, now time.Time) error {
 	err := c.store.PlanEvent(ctx, e, token, nil, now)
 	if err == nil {
+		return nil
+	}
+	if cErr := c.store.CompleteInbox(ctx, e.InboxID, token, now); cErr == nil {
 		return nil
 	}
 	return c.store.QuarantineInbox(ctx, e.InboxID, token, now)

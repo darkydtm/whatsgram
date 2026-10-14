@@ -103,6 +103,21 @@ func (s *Store) QuarantineInbox(ctx context.Context, id int64, token string, now
 	}
 	return safe(tx.Commit())
 }
+
+func (s *Store) CompleteInbox(ctx context.Context, id int64, token string, now time.Time) error {
+	if now.IsZero() {
+		return ErrInvalid
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return safe(err)
+	}
+	defer tx.Rollback()
+	if err := changed(tx.ExecContext(ctx, "UPDATE bridge_inbox SET state='done',lease_token=NULL,lease_until_ms=NULL WHERE id=? AND state='leased' AND lease_token=? AND lease_until_ms>?", id, token, fenceTime(now).UnixMilli())); err != nil {
+		return err
+	}
+	return safe(tx.Commit())
+}
 func (s *Store) PlanEvent(ctx context.Context, e domain.Event, token string, deliveries []domain.Delivery, now time.Time) error {
 	return s.PlanEventWithTimers(ctx, e, token, deliveries, nil, now)
 }
@@ -261,8 +276,11 @@ func (s *Store) applySource(ctx context.Context, tx *sql.Tx, e domain.Event, del
 	if tombstone && e.Kind != domain.MessageRevoke {
 		return messageID, chatID, true, nil
 	}
-	if e.Kind != domain.MessageCreate && e.Kind != domain.MessageEdit && e.Kind != domain.MessageRevoke {
+	if e.Kind != domain.MessageCreate && e.Kind != domain.MessageEdit && e.Kind != domain.MessageRevoke && e.Kind != domain.ReactionSet {
 		return 0, 0, false, ErrInvalid
+	}
+	if e.Kind == domain.ReactionSet {
+		return messageID, chatID, false, nil
 	}
 	var version domain.SourceVersion
 	if err := json.Unmarshal(previous, &version); err != nil {
