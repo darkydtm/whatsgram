@@ -20,14 +20,17 @@ import (
 )
 
 type Client struct {
-	cfg    config.Telegram
-	api    *bot.Bot
-	http   *http.Client
-	logger *slog.Logger
-	mu     sync.RWMutex
-	botID  int64
-	ready  bool
-	parts  PartStore
+	cfg         config.Telegram
+	api         *bot.Bot
+	http        *http.Client
+	logger      *slog.Logger
+	mu          sync.RWMutex
+	botID       int64
+	ready       bool
+	parts       PartStore
+	admission   BatchStore
+	pollOptions PollOptions
+	polling     bool
 }
 
 func (*Client) Format(s fmt.State, _ rune) { io.WriteString(s, "TelegramClient[redacted]") }
@@ -121,6 +124,12 @@ func (c *Client) SendText(ctx context.Context, request domain.SendTextRequest) (
 			return domain.SendResult{}, adapterError(domain.Permanent, "invalid_target")
 		}
 		params.ReplyParameters = &models.ReplyParameters{MessageID: message}
+	}
+	if err := ctx.Err(); err != nil {
+		return domain.SendResult{}, err
+	}
+	if err := c.Initialize(ctx); err != nil {
+		return domain.SendResult{}, err
 	}
 	message, err := c.api.SendMessage(ctx, params)
 	if err != nil {
