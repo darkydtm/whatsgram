@@ -109,6 +109,7 @@ func (s *Store) BeginSend(ctx context.Context, id int64, token string, now time.
 		return safe(err)
 	}
 	defer tx.Rollback()
+	now = fenceTime(now)
 	var payload []byte
 	var chat string
 	err = tx.QueryRowContext(ctx, `SELECT o.payload,c.wa_jid FROM bridge_outbox o JOIN bridge_chat c ON c.id=o.chat_id WHERE o.id=? AND o.state='leased' AND o.lease_token=? AND o.lease_until_ms>? AND o.topic_generation=c.topic_generation AND ((o.operation='topic.create' AND c.state='discovered') OR (o.operation!='topic.create' AND c.state='active'))`, id, token, now.UnixMilli()).Scan(&payload, &chat)
@@ -172,7 +173,7 @@ func (s *Store) BeginSend(ctx context.Context, id int64, token string, now time.
 			return safe(err)
 		}
 	}
-	if err := changed(tx.ExecContext(ctx, "UPDATE bridge_outbox SET state='sending',send_started_at_ms=? WHERE id=? AND state='leased' AND lease_token=? AND lease_until_ms>?", now.UnixMilli(), id, token, now.UnixMilli())); err != nil {
+	if err := changed(tx.ExecContext(ctx, "UPDATE bridge_outbox SET state='sending',send_started_at_ms=? WHERE id=? AND state='leased' AND lease_token=? AND lease_until_ms>?", fenceTime(now).UnixMilli(), id, token, fenceTime(now).UnixMilli())); err != nil {
 		return err
 	}
 	return safe(tx.Commit())

@@ -19,6 +19,7 @@ func (s *Store) CompleteDelivery(ctx context.Context, id int64, token string, c 
 		return safe(err)
 	}
 	defer tx.Rollback()
+	now = fenceTime(now)
 	var payload []byte
 	var generation int64
 	var waChat string
@@ -123,7 +124,7 @@ func (s *Store) CompleteDelivery(ctx context.Context, id int64, token string, c 
 	if err != nil || len(result) > domain.MaxEventBytes {
 		return ErrInvalid
 	}
-	if err := changed(tx.ExecContext(ctx, "UPDATE bridge_outbox SET state='succeeded',result=?,lease_token=NULL,lease_until_ms=NULL WHERE id=? AND state='sending' AND lease_token=? AND lease_until_ms>?", result, id, token, now.UnixMilli())); err != nil {
+	if err := changed(tx.ExecContext(ctx, "UPDATE bridge_outbox SET state='succeeded',result=?,lease_token=NULL,lease_until_ms=NULL WHERE id=? AND state='sending' AND lease_token=? AND lease_until_ms>?", result, id, token, fenceTime(now).UnixMilli())); err != nil {
 		return err
 	}
 	return safe(tx.Commit())
@@ -150,6 +151,7 @@ func (s *Store) FailDelivery(ctx context.Context, id int64, token string, decisi
 		return safe(err)
 	}
 	defer tx.Rollback()
+	now = fenceTime(now)
 	var started sql.NullInt64
 	err = tx.QueryRowContext(ctx, "SELECT send_started_at_ms FROM bridge_outbox WHERE id=? AND state IN ('leased','sending') AND lease_token=? AND lease_until_ms>?", id, token, now.UnixMilli()).Scan(&started)
 	if err == sql.ErrNoRows {
@@ -167,7 +169,7 @@ func (s *Store) FailDelivery(ctx context.Context, id int64, token string, decisi
 	if decision.State == "uncertain" && decision.ErrorClass != domain.Uncertain {
 		return ErrInvalid
 	}
-	if err := changed(tx.ExecContext(ctx, "UPDATE bridge_outbox SET state=?,available_at_ms=?,error_class=?,lease_token=NULL,lease_until_ms=NULL WHERE id=? AND state IN ('leased','sending') AND lease_token=? AND lease_until_ms>?", decision.State, decision.AvailableAt.UnixMilli(), decision.ErrorClass, id, token, now.UnixMilli())); err != nil {
+	if err := changed(tx.ExecContext(ctx, "UPDATE bridge_outbox SET state=?,available_at_ms=?,error_class=?,lease_token=NULL,lease_until_ms=NULL WHERE id=? AND state IN ('leased','sending') AND lease_token=? AND lease_until_ms>?", decision.State, decision.AvailableAt.UnixMilli(), decision.ErrorClass, id, token, fenceTime(now).UnixMilli())); err != nil {
 		return err
 	}
 	return safe(tx.Commit())

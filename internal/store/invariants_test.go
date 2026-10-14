@@ -98,6 +98,60 @@ func TestTwoStoresClaimDeliveryOnce(t *testing.T) {
 	}
 }
 
+func TestInboxAliasesOfOneLogicalMessageCannotLeaseTogether(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	now := time.Now().Add(time.Second)
+	e, d := sending(t, s, now)
+	if err := s.CompleteDelivery(ctx, d.ID, d.LeaseToken, completion(d), now); err != nil {
+		t.Fatal(err)
+	}
+	edit := event("tg-edit")
+	edit.Target = e.Target
+	edit.Kind = domain.MessageEdit
+	edit.Version.Order = 2
+	waEdit := event("wa-edit")
+	waEdit.Source = domain.WhatsApp
+	waEdit.Chat = "123@g.us"
+	waEdit.Target = &completion(d).Result.Parts[0].Ref
+	waEdit.Kind = domain.MessageEdit
+	if _, err := s.Accept(ctx, edit); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Accept(ctx, waEdit); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.ClaimInbox(ctx, now, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.ClaimInbox(ctx, now, time.Minute); !errors.Is(err, ErrNoWork) {
+		t.Fatal("logical message aliases concurrently leased", err)
+	}
+}
+
+func TestLeaseCannotBeExtendedByPassingOldNow(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	chat := activeChat(t, s)
+	now := time.Now().Add(time.Second)
+	e, tok := leaseEvent(t, s, event("1"), now)
+	if err := s.PlanEvent(ctx, e, tok, []domain.Delivery{intent(chat, "create")}, now); err != nil {
+		t.Fatal(err)
+	}
+	claimedAt := now.Add(time.Second)
+	d, err := s.ClaimDelivery(ctx, claimedAt, time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wait := time.Until(d.LeaseUntil) + 5*time.Millisecond
+	if wait > 0 {
+		time.Sleep(wait)
+	}
+	if err := s.BeginSend(ctx, d.ID, d.LeaseToken, claimedAt); !errors.Is(err, ErrLeaseLost) {
+		t.Fatal("old now extended expired lease", err)
+	}
+}
+
 func TestPlannerRejectsForeignChatBinding(t *testing.T) {
 	s := testStore(t)
 	chat := activeChat(t, s)

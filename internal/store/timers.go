@@ -128,6 +128,7 @@ func (s *Store) CompleteTimer(ctx context.Context, id int64, token string, deliv
 		return safe(err)
 	}
 	defer tx.Rollback()
+	now = fenceTime(now)
 	var messageID, chatID, inboxID int64
 	var kind TimerKind
 	var version, effective []byte
@@ -174,7 +175,7 @@ func (s *Store) CompleteTimer(ctx context.Context, id int64, token string, deliv
 			return safe(err)
 		}
 	}
-	if err := changed(tx.ExecContext(ctx, "UPDATE bridge_timer SET state='done',lease_token=NULL,lease_until_ms=NULL WHERE id=? AND state='leased' AND lease_token=? AND lease_until_ms>?", id, token, now.UnixMilli())); err != nil {
+	if err := changed(tx.ExecContext(ctx, "UPDATE bridge_timer SET state='done',lease_token=NULL,lease_until_ms=NULL WHERE id=? AND state='leased' AND lease_token=? AND lease_until_ms>?", id, token, fenceTime(now).UnixMilli())); err != nil {
 		return err
 	}
 	return safe(tx.Commit())

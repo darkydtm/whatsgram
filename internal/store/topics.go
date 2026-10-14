@@ -18,6 +18,7 @@ func (s *Store) CompleteTopicDelivery(ctx context.Context, id int64, token strin
 		return safe(err)
 	}
 	defer tx.Rollback()
+	now = fenceTime(now)
 	var payload []byte
 	var chatID, generation int64
 	var state ChatState
@@ -52,7 +53,7 @@ func (s *Store) CompleteTopicDelivery(ctx context.Context, id int64, token strin
 		}
 	}
 	result, _ := json.Marshal(topic)
-	if err := changed(tx.ExecContext(ctx, "UPDATE bridge_outbox SET state='succeeded',result=?,lease_token=NULL,lease_until_ms=NULL WHERE id=? AND state='sending' AND lease_token=? AND lease_until_ms>?", result, id, token, now.UnixMilli())); err != nil {
+	if err := changed(tx.ExecContext(ctx, "UPDATE bridge_outbox SET state='succeeded',result=?,lease_token=NULL,lease_until_ms=NULL WHERE id=? AND state='sending' AND lease_token=? AND lease_until_ms>?", result, id, token, fenceTime(now).UnixMilli())); err != nil {
 		return err
 	}
 	return safe(tx.Commit())
