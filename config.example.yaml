@@ -1,0 +1,29 @@
+# Set WHATSGRAM_TELEGRAM_TOKEN in the process environment.
+# Replace the fake chat and user IDs before running the bridge.
+telegram:
+  token: ""
+  chat_id: -1001234567890
+  allowed_user_ids: [42]
+  endpoint: https://api.telegram.org
+  local_api: false
+whatsapp:
+  pairing_mode: qr
+  phone: ""
+  history_policy: none
+database:
+  path: data/whatsgram.db
+  busy_timeout: 5s
+media:
+  temp_dir: ""
+  ffmpeg: ffmpeg
+  max_bytes: 52428800
+  max_duration: 10m
+  timeout: 2m
+  workers: 2
+runtime:
+  queue_capacity: 256
+  operation_timeout: 30s
+  max_attempts: 5
+  retry_base: 1s
+  retry_max: 1m
+  shutdown_timeout: 15s
