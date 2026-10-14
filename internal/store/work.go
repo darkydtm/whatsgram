@@ -112,6 +112,9 @@ func (s *Store) PlanEventWithTimers(ctx context.Context, e domain.Event, token s
 	if string(encoded) != string(payload) {
 		return ErrConflict
 	}
+	if e.Target != nil && (e.Kind == domain.MessageCreate || e.Kind == domain.MessageEdit) && e.Actor != e.Target.Author {
+		return ErrConflict
+	}
 	var chatID, messageID int64
 	var suppress bool
 	if e.Target != nil {
@@ -255,8 +258,10 @@ func (s *Store) applySource(ctx context.Context, tx *sql.Tx, e domain.Event, del
 		if err := json.Unmarshal(effective, &effectiveVersion); err != nil {
 			return 0, 0, false, ErrStorage
 		}
-		if _, err := e.Version.Compare(effectiveVersion); err != nil {
+		if order, err := e.Version.Compare(effectiveVersion); err != nil {
 			return 0, 0, false, err
+		} else if order <= 0 {
+			return messageID, chatID, true, nil
 		}
 	}
 	versionData, _ := json.Marshal(e.Version)

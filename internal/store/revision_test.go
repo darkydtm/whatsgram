@@ -34,6 +34,59 @@ func TestPlanAndTimerCommitAsOneTransaction(t *testing.T) {
 	}
 }
 
+func TestSourceEditRequiresNormalizedOwnerActor(t *testing.T) {
+	s := testStore(t)
+	activeChat(t, s)
+	ctx := context.Background()
+	now := time.Now().Add(time.Second)
+	e, tok := leaseEvent(t, s, event("1"), now)
+	if err := s.PlanEvent(ctx, e, tok, nil, now); err != nil {
+		t.Fatal(err)
+	}
+	edit := event("forged-edit")
+	edit.Target = e.Target
+	edit.Kind = domain.MessageEdit
+	edit.Actor = "other"
+	edit.Version.Order = 2
+	leased, token := leaseEvent(t, s, edit, now)
+	if err := s.PlanEvent(ctx, leased, token, nil, now); !errors.Is(err, ErrConflict) {
+		t.Fatal("non-owner source edit changed state", err)
+	}
+}
+
+func TestOlderSourceRevisionCannotReplaceNewerEffectiveVersion(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	now := time.Now().Add(time.Second)
+	e, d := sending(t, s, now)
+	if err := s.CompleteDelivery(ctx, d.ID, d.LeaseToken, completion(d), now); err != nil {
+		t.Fatal(err)
+	}
+	edit := event("third")
+	edit.Target = e.Target
+	edit.Kind = domain.MessageEdit
+	edit.Version.Order = 3
+	leased, tok := leaseEvent(t, s, edit, now)
+	if err := s.PlanEvent(ctx, leased, tok, nil, now); err != nil {
+		t.Fatal(err)
+	}
+	other := event("second")
+	other.Source = domain.WhatsApp
+	other.Chat = "123@g.us"
+	other.Actor = "account"
+	other.Target = &completion(d).Result.Parts[0].Ref
+	other.Kind = domain.MessageEdit
+	other.Version.Order = 2
+	leased, tok = leaseEvent(t, s, other, now)
+	if err := s.PlanEvent(ctx, leased, tok, nil, now); err != nil {
+		t.Fatal(err)
+	}
+	state, err := s.Message(ctx, *e.Target)
+	if err != nil || state.Version.Order != 3 {
+		t.Fatal("effective state regressed", state, err)
+	}
+}
+
 func TestStaleUnsentEditDoesNotOvertakeNewerEffectiveState(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
