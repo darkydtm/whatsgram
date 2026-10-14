@@ -285,6 +285,9 @@ func (s *Store) applySource(ctx context.Context, tx *sql.Tx, e domain.Event, del
 		if _, err := tx.ExecContext(ctx, "UPDATE bridge_outbox SET state='superseded',lease_token=NULL,lease_until_ms=NULL WHERE message_id=? AND send_started_at_ms IS NULL AND operation IN ('message.create','message.edit','reaction.set') AND state IN ('pending','leased')", messageID); err != nil {
 			return 0, 0, false, safe(err)
 		}
+		if _, err := tx.ExecContext(ctx, "UPDATE bridge_source_state SET deleted=1 WHERE part_id IN (SELECT id FROM bridge_part WHERE message_id=?)", messageID); err != nil {
+			return 0, 0, false, safe(err)
+		}
 		if _, err := tx.ExecContext(ctx, "UPDATE bridge_part SET deleted=1 WHERE message_id=?", messageID); err != nil {
 			return 0, 0, false, safe(err)
 		}

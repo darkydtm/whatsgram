@@ -87,6 +87,27 @@ func TestOlderSourceRevisionCannotReplaceNewerEffectiveVersion(t *testing.T) {
 	}
 }
 
+func TestRevocationMarksAllMappedSourceStatesDeleted(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	now := time.Now().Add(time.Second)
+	e, d := sending(t, s, now)
+	if err := s.CompleteDelivery(ctx, d.ID, d.LeaseToken, completion(d), now); err != nil {
+		t.Fatal(err)
+	}
+	revoke := event("revoke")
+	revoke.Target = e.Target
+	revoke.Kind = domain.MessageRevoke
+	leased, tok := leaseEvent(t, s, revoke, now)
+	if err := s.PlanEvent(ctx, leased, tok, nil, now); err != nil {
+		t.Fatal(err)
+	}
+	_, deleted, err := s.SourceState(ctx, completion(d).Result.Parts[1].Ref)
+	if err != nil || !deleted {
+		t.Fatal("mapped source tombstone missing", deleted, err)
+	}
+}
+
 func TestStaleUnsentEditDoesNotOvertakeNewerEffectiveState(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()

@@ -206,6 +206,12 @@ func (s *Store) CompleteTimer(ctx context.Context, id int64, token string, deliv
 		if _, err := tx.ExecContext(ctx, "UPDATE bridge_message SET tombstone=1,state_payload=? WHERE id=?", []byte("null"), messageID); err != nil {
 			return safe(err)
 		}
+		if _, err := tx.ExecContext(ctx, "UPDATE bridge_source_state SET deleted=1 WHERE part_id IN (SELECT id FROM bridge_part WHERE message_id=?)", messageID); err != nil {
+			return safe(err)
+		}
+		if _, err := tx.ExecContext(ctx, "UPDATE bridge_outbox SET state='superseded',lease_token=NULL,lease_until_ms=NULL WHERE message_id=? AND send_started_at_ms IS NULL AND operation IN ('message.create','message.edit','reaction.set') AND state IN ('pending','leased')", messageID); err != nil {
+			return safe(err)
+		}
 		if _, err := tx.ExecContext(ctx, "UPDATE bridge_part SET deleted=1 WHERE message_id=?", messageID); err != nil {
 			return safe(err)
 		}
