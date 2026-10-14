@@ -111,7 +111,7 @@ func (c *Coordinator) sendTelegram(ctx context.Context, delivery domain.Delivery
 
 	content := domain.TextContent{}
 	if delivery.Text != nil {
-		content = *delivery.Text
+		content = c.resolveReplyTo(ctx, domain.Telegram, *delivery.Text)
 	}
 
 	req := domain.SendTextRequest{
@@ -126,7 +126,7 @@ func (c *Coordinator) sendTelegram(ctx context.Context, delivery domain.Delivery
 func (c *Coordinator) sendWhatsApp(ctx context.Context, delivery domain.Delivery) (domain.SendResult, error) {
 	content := domain.TextContent{}
 	if delivery.Text != nil {
-		content = *delivery.Text
+		content = c.resolveReplyTo(ctx, domain.WhatsApp, *delivery.Text)
 	}
 
 	req := domain.SendTextRequest{
@@ -137,6 +137,33 @@ func (c *Coordinator) sendWhatsApp(ctx context.Context, delivery domain.Delivery
 	}
 
 	return c.waPort.SendText(ctx, req)
+}
+
+func (c *Coordinator) resolveReplyTo(ctx context.Context, targetPlatform domain.Platform, content domain.TextContent) domain.TextContent {
+	if content.ReplyTo == nil {
+		return content
+	}
+
+	if content.ReplyTo.Platform == targetPlatform {
+		if part, err := c.store.Part(ctx, *content.ReplyTo); err == nil && part.Deleted {
+			content.ReplyTo = nil
+		}
+		return content
+	}
+
+	parts, err := c.store.FindParts(ctx, *content.ReplyTo)
+	if err == nil {
+		for _, p := range parts {
+			if p.Ref.Platform == targetPlatform && !p.Deleted {
+				mapped := p.Ref
+				content.ReplyTo = &mapped
+				return content
+			}
+		}
+	}
+
+	content.ReplyTo = nil
+	return content
 }
 
 func (c *Coordinator) buildFallbackParts(delivery domain.Delivery) []domain.DeliveredPart {

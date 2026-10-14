@@ -661,3 +661,165 @@ func TestCoordinatorRunChildLoopError(t *testing.T) {
 		t.Fatalf("expected context.DeadlineExceeded, got: %v", err)
 	}
 }
+
+func TestCrossPlatformReplyMapping(t *testing.T) {
+	coord, st, _, waPort, _ := setupTestEnvironment(t)
+	ctx := context.Background()
+
+	waJID := "15550007777@s.whatsapp.net"
+	cand := domain.ChatCandidate{WhatsAppJID: waJID, Title: "Alice", Source: "test"}
+	if err := st.DiscoverChat(ctx, cand, -10012345); err != nil {
+		t.Fatal(err)
+	}
+	topicRef := domain.TopicRef{ChatID: -10012345, ThreadID: 25, Generation: 1}
+	if err := st.BindTopic(ctx, waJID, topicRef); err != nil {
+		t.Fatal(err)
+	}
+
+	waMsgEvent := makeWhatsAppMessageEvent("wa-msg-1", waJID, waJID, false, "Original WA message")
+	if _, err := st.Accept(ctx, waMsgEvent); err != nil {
+		t.Fatal(err)
+	}
+	if err := coord.StepInbox(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := coord.StepDelivery(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	parts, err := st.FindParts(ctx, *waMsgEvent.Target)
+	if err != nil || len(parts) < 2 {
+		t.Fatalf("expected at least 2 parts, got %d, err: %v", len(parts), err)
+	}
+	var tgPart domain.DeliveredPart
+	for _, p := range parts {
+		if p.Ref.Platform == domain.Telegram {
+			tgPart = p
+			break
+		}
+	}
+	if tgPart.Ref.Platform != domain.Telegram {
+		t.Fatal("failed to find delivered Telegram part")
+	}
+
+	tgReplyEvent := makeTelegramMessageEvent("tg-reply-1", -10012345, 42, 25, "Reply from Telegram")
+	tgReplyEvent.Text.ReplyTo = &tgPart.Ref
+	if _, err := st.Accept(ctx, tgReplyEvent); err != nil {
+		t.Fatal(err)
+	}
+	if err := coord.StepInbox(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := coord.StepDelivery(ctx); err != nil {
+		t.Fatal(err)
+	}
+	lastWa := waPort.LastSentRequest()
+	if lastWa.Content.ReplyTo == nil {
+		t.Fatal("expected mapped ReplyTo on WhatsApp delivery, got nil")
+	}
+	if lastWa.Content.ReplyTo.Platform != domain.WhatsApp || lastWa.Content.ReplyTo.ID != "wa-msg-1" {
+		t.Fatalf("expected WhatsApp ReplyTo with ID wa-msg-1, got: %+v", lastWa.Content.ReplyTo)
+	}
+
+	tgUnmappedEvent := makeTelegramMessageEvent("tg-reply-2", -10012345, 42, 25, "Unmapped reply")
+	tgUnmappedEvent.Text.ReplyTo = &domain.MessageRef{
+		Platform: domain.Telegram,
+		Chat:     "-10012345",
+		Author:   "42",
+		ID:       "9999999",
+	}
+	if _, err := st.Accept(ctx, tgUnmappedEvent); err != nil {
+		t.Fatal(err)
+	}
+	if err := coord.StepInbox(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := coord.StepDelivery(ctx); err != nil {
+		t.Fatal(err)
+	}
+	lastWa = waPort.LastSentRequest()
+	if lastWa.Content.ReplyTo != nil {
+		t.Fatalf("expected nil ReplyTo for unmapped target, got: %+v", lastWa.Content.ReplyTo)
+	}
+}
+
+func TestCrossPlatformReplyMappingReverse(t *testing.T) {
+	coord, st, tgPort, _, _ := setupTestEnvironment(t)
+	ctx := context.Background()
+
+	waJID := "15550008888@s.whatsapp.net"
+	cand := domain.ChatCandidate{WhatsAppJID: waJID, Title: "Bob", Source: "test"}
+	if err := st.DiscoverChat(ctx, cand, -10012345); err != nil {
+		t.Fatal(err)
+	}
+	topicRef := domain.TopicRef{ChatID: -10012345, ThreadID: 35, Generation: 1}
+	if err := st.BindTopic(ctx, waJID, topicRef); err != nil {
+		t.Fatal(err)
+	}
+
+	tgMsgEvent := makeTelegramMessageEvent("tg-msg-origin", -10012345, 42, 35, "Origin message from Telegram")
+	if _, err := st.Accept(ctx, tgMsgEvent); err != nil {
+		t.Fatal(err)
+	}
+	if err := coord.StepInbox(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := coord.StepDelivery(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	parts, err := st.FindParts(ctx, *tgMsgEvent.Target)
+	if err != nil || len(parts) < 2 {
+		t.Fatalf("expected at least 2 parts, got %d, err: %v", len(parts), err)
+	}
+	var waPart domain.DeliveredPart
+	for _, p := range parts {
+		if p.Ref.Platform == domain.WhatsApp {
+			waPart = p
+			break
+		}
+	}
+	if waPart.Ref.Platform != domain.WhatsApp {
+		t.Fatal("failed to find delivered WhatsApp part")
+	}
+
+	waReplyEvent := makeWhatsAppMessageEvent("wa-reply-1", waJID, waJID, false, "Reply from WhatsApp")
+	waReplyEvent.Text.ReplyTo = &waPart.Ref
+	if _, err := st.Accept(ctx, waReplyEvent); err != nil {
+		t.Fatal(err)
+	}
+	if err := coord.StepInbox(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := coord.StepDelivery(ctx); err != nil {
+		t.Fatal(err)
+	}
+	lastTg := tgPort.LastSentRequest()
+	if lastTg.Content.ReplyTo == nil {
+		t.Fatal("expected mapped ReplyTo on Telegram delivery, got nil")
+	}
+	if lastTg.Content.ReplyTo.Platform != domain.Telegram || lastTg.Content.ReplyTo.ID != "tg-msg-origin" {
+		t.Fatalf("expected Telegram ReplyTo with ID tg-msg-origin, got: %+v", lastTg.Content.ReplyTo)
+	}
+
+	waUnmappedEvent := makeWhatsAppMessageEvent("wa-reply-2", waJID, waJID, false, "Unmapped WA reply")
+	waUnmappedEvent.Text.ReplyTo = &domain.MessageRef{
+		Platform: domain.WhatsApp,
+		Chat:     waJID,
+		Author:   waJID,
+		ID:       "unknown-wa-id",
+	}
+	if _, err := st.Accept(ctx, waUnmappedEvent); err != nil {
+		t.Fatal(err)
+	}
+	if err := coord.StepInbox(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := coord.StepDelivery(ctx); err != nil {
+		t.Fatal(err)
+	}
+	lastTg = tgPort.LastSentRequest()
+	if lastTg.Content.ReplyTo != nil {
+		t.Fatalf("expected nil ReplyTo for unmapped target, got: %+v", lastTg.Content.ReplyTo)
+	}
+}

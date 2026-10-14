@@ -95,6 +95,11 @@ func (c *Coordinator) handleTelegramEvent(ctx context.Context, e domain.Event, t
 		return c.completeInbox(ctx, e, token, now)
 	}
 
+	if textContent.ReplyTo != nil && textContent.ReplyTo.Platform != domain.WhatsApp {
+		resolved := c.resolveReplyTo(ctx, domain.WhatsApp, *textContent)
+		textContent = &resolved
+	}
+
 	sendID := c.waPort.AllocateSendID()
 	c.recordBridgeSend(sendID)
 
@@ -135,6 +140,10 @@ func (c *Coordinator) handleWhatsAppEvent(ctx context.Context, e domain.Event, t
 		if formatted == nil {
 			return c.completeInbox(ctx, e, token, now)
 		}
+		if formatted.ReplyTo != nil && formatted.ReplyTo.Platform != domain.Telegram {
+			resolved := c.resolveReplyTo(ctx, domain.Telegram, *formatted)
+			formatted = &resolved
+		}
 
 		delivery := domain.Delivery{
 			OperationKey:    fmt.Sprintf("wa:owner:%d:%s", e.InboxID, e.Key),
@@ -154,6 +163,10 @@ func (c *Coordinator) handleWhatsAppEvent(ctx context.Context, e domain.Event, t
 	formatted := formatWhatsAppText(e, false)
 	if formatted == nil {
 		return c.completeInbox(ctx, e, token, now)
+	}
+	if formatted.ReplyTo != nil && formatted.ReplyTo.Platform != domain.Telegram {
+		resolved := c.resolveReplyTo(ctx, domain.Telegram, *formatted)
+		formatted = &resolved
 	}
 
 	delivery := domain.Delivery{
