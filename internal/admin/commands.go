@@ -1,11 +1,15 @@
 package admin
 
-import "strings"
+import (
+	"strconv"
+	"strings"
+)
 
 type ParsedCommand struct {
-	Name     string
-	Mode     string
-	Argument PrivateValue
+	Name            string
+	Mode            string
+	Argument        PrivateValue
+	TargetMessageID int64
 }
 
 func (p Policy) parseCommand(in Input) Decision {
@@ -33,6 +37,23 @@ func (p Policy) parseCommand(in Input) Decision {
 		if len(fields) != 1 {
 			return invalidCommand()
 		}
+	case "del", "pin", "read":
+		if len(fields) != 1 || in.ReplyMessageID <= 0 {
+			return invalidCommand()
+		}
+		command.TargetMessageID = in.ReplyMessageID
+	case "unpin":
+		if len(fields) == 1 && in.ReplyMessageID > 0 {
+			command.TargetMessageID = in.ReplyMessageID
+		} else if len(fields) == 2 && in.ReplyMessageID == 0 {
+			id, ok := positiveID(fields[1])
+			if !ok {
+				return invalidCommand()
+			}
+			command.TargetMessageID = id
+		} else {
+			return invalidCommand()
+		}
 	case "pair":
 		if len(fields) == 2 && fields[1] == "qr" {
 			command.Mode = "qr"
@@ -58,6 +79,19 @@ func internationalDigits(value string) bool {
 		}
 	}
 	return true
+}
+
+func positiveID(value string) (int64, bool) {
+	if value == "" || value[0] < '1' || value[0] > '9' {
+		return 0, false
+	}
+	for _, digit := range value {
+		if digit < '0' || digit > '9' {
+			return 0, false
+		}
+	}
+	id, err := strconv.ParseInt(value, 10, 32)
+	return id, err == nil
 }
 
 func invalidCommand() Decision {
