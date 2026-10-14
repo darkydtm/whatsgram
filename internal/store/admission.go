@@ -56,7 +56,7 @@ func (s *Store) accept(ctx context.Context, tx *sql.Tx, e domain.Event) (domain.
 	if e.InboxID != 0 || e.Validate() != nil {
 		return domain.Admission{}, ErrInvalid
 	}
-	payload, err := json.Marshal(e)
+	payload, err := marshalEvent(e)
 	if err != nil || len(payload) > domain.MaxEventBytes {
 		return domain.Admission{}, ErrInvalid
 	}

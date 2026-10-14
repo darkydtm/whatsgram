@@ -275,7 +275,7 @@ type WhatsAppPort interface {
 }
 type PairingNotice struct {
 	Kind      string
-	Secret    string
+	Secret    PairingSecret
 	ExpiresAt time.Time
 }
 

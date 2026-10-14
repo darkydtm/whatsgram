@@ -108,7 +108,7 @@ func (s *Store) PlanEventWithTimers(ctx context.Context, e domain.Event, token s
 	}
 	original := e
 	original.InboxID = 0
-	encoded, _ := json.Marshal(original)
+	encoded, _ := marshalEvent(original)
 	if string(encoded) != string(payload) {
 		return ErrConflict
 	}
@@ -202,7 +202,7 @@ func (s *Store) applySource(ctx context.Context, tx *sql.Tx, e domain.Event, del
 			return 0, 0, false, ErrConflict
 		}
 		version, _ := json.Marshal(e.Version)
-		text, _ := json.Marshal(e.Text)
+		text, _ := marshalText(e.Text)
 		deleted := e.Kind == domain.MessageRevoke
 		if deleted {
 			text = []byte("null")
@@ -265,7 +265,7 @@ func (s *Store) applySource(ctx context.Context, tx *sql.Tx, e domain.Event, del
 		}
 	}
 	versionData, _ := json.Marshal(e.Version)
-	text, _ := json.Marshal(e.Text)
+	text, _ := marshalText(e.Text)
 	deleted := e.Kind == domain.MessageRevoke
 	if deleted {
 		text = []byte("null")
@@ -333,7 +333,7 @@ func (s *Store) insertDelivery(ctx context.Context, tx *sql.Tx, inboxID int64, d
 			return ErrConflict
 		}
 	}
-	payload, err := json.Marshal(d)
+	payload, err := marshalDelivery(d)
 	if err != nil || len(payload) > domain.MaxEventBytes {
 		return ErrInvalid
 	}

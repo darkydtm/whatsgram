@@ -244,11 +244,26 @@ conflict; busy/locked map to bounded busy; I/O/full/corruption map to storage
 failure, not successful admission.
 
 Domain Event, TextContent, Delivery, SendTextRequest, PairingNotice and
-AdapterError are redacted in fmt and slog output. AdapterError prints only a
-validated class and allowlisted safe code; its Cause is available for internal
-classification but must not be logged directly. Do not log raw fields, JSON
-payloads, session devices or sqlstore structures. Synthetic tests are not live
-cryptographic/session data.
+AdapterError redact ordinary fmt, direct slog and public JSON output. Their
+MarshalJSON methods also protect slices, maps and wrappers passed to the normal
+slog.JSONHandler. Storage uses explicit private persistence codecs that retain
+full event, text and intent fidelity; public JSON is diagnostic, not a wire or
+persistence format.
+
+PairingNotice.Secret is an opaque closure-backed PairingSecret, constructed by
+NewPairingSecret(string). Only a trusted notification consumer may call Reveal()
+to obtain exact bytes. Its zero value reveals an empty string. Direct, pointer
+and nested malformed fmt diagnostics cannot reflect the captured pairing value.
+The type is non-comparable and does not provide memory zeroization.
+
+Message text and other raw exported fields remain ordinary data. Malformed fmt
+verbs can bypass Formatter and expose these fields; arbitrary diagnostic dumps
+of input objects are prohibited. Use the JSON/slog boundary or ordinary fmt,
+never individual raw fields, reflection or private persistence bytes. This is
+not universal malformed-fmt protection for conversation data. AdapterError prints
+only a validated class and allowlisted safe code; its Cause is available for
+classification but must not be logged directly. Never log session devices or
+sqlstore structures. Synthetic tests are not live cryptographic/session data.
 
 ## Verification boundaries
 
