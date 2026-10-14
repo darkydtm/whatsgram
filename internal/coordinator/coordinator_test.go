@@ -18,12 +18,28 @@ import (
 	"github.com/darkydtm/whatsgram/internal/store"
 )
 
+type telegramEditCall struct {
+	Ref     domain.MessageRef
+	Content domain.TextContent
+}
+
+type telegramReactionCall struct {
+	Ref      domain.MessageRef
+	Reaction string
+}
+
 type fakeTelegramPort struct {
-	mu            sync.Mutex
-	createdTopics []domain.TopicRef
-	nextThreadID  int64
-	sentRequests  []domain.SendTextRequest
-	sendErr       error
+	mu              sync.Mutex
+	createdTopics   []domain.TopicRef
+	nextThreadID    int64
+	sentRequests    []domain.SendTextRequest
+	sendErr         error
+	editedMessages  []telegramEditCall
+	editErr         error
+	deletedMessages []domain.MessageRef
+	deleteErr       error
+	reactions       []telegramReactionCall
+	reactionErr     error
 }
 
 func (f *fakeTelegramPort) Run(ctx context.Context, sink domain.EventSink) error {
@@ -65,7 +81,7 @@ func (f *fakeTelegramPort) SendText(ctx context.Context, req domain.SendTextRequ
 		Index:           0,
 		Role:            domain.RolePrimary,
 		BridgeOwned:     true,
-		Capabilities:    domain.CanDelete | domain.CanRevoke | domain.CanEditText,
+		Capabilities:    domain.CanDelete | domain.CanRevoke | domain.CanEditText | domain.CanReact,
 		TopicGeneration: req.TelegramTopic.Generation,
 	}
 	return domain.SendResult{
@@ -75,14 +91,32 @@ func (f *fakeTelegramPort) SendText(ctx context.Context, req domain.SendTextRequ
 }
 
 func (f *fakeTelegramPort) EditText(ctx context.Context, ref domain.MessageRef, content domain.TextContent) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.editErr != nil {
+		return f.editErr
+	}
+	f.editedMessages = append(f.editedMessages, telegramEditCall{Ref: ref, Content: content})
 	return nil
 }
 
 func (f *fakeTelegramPort) Delete(ctx context.Context, ref domain.MessageRef) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.deleteErr != nil {
+		return f.deleteErr
+	}
+	f.deletedMessages = append(f.deletedMessages, ref)
 	return nil
 }
 
 func (f *fakeTelegramPort) SetOwnReaction(ctx context.Context, ref domain.MessageRef, reaction string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.reactionErr != nil {
+		return f.reactionErr
+	}
+	f.reactions = append(f.reactions, telegramReactionCall{Ref: ref, Reaction: reaction})
 	return nil
 }
 
@@ -95,12 +129,35 @@ func (f *fakeTelegramPort) LastSentRequest() domain.SendTextRequest {
 	return f.sentRequests[len(f.sentRequests)-1]
 }
 
+type whatsAppEditCall struct {
+	Ref     domain.MessageRef
+	Content domain.TextContent
+	Salt    string
+}
+
+type whatsAppRevokeCall struct {
+	Ref  domain.MessageRef
+	Salt string
+}
+
+type whatsAppReactionCall struct {
+	Ref      domain.MessageRef
+	Reaction string
+	Salt     string
+}
+
 type fakeWhatsAppPort struct {
-	mu           sync.Mutex
-	nextSendID   int64
-	candidates   []domain.ChatCandidate
-	sentRequests []domain.SendTextRequest
-	sendErr      error
+	mu              sync.Mutex
+	nextSendID      int64
+	candidates      []domain.ChatCandidate
+	sentRequests    []domain.SendTextRequest
+	sendErr         error
+	editedMessages  []whatsAppEditCall
+	editErr         error
+	revokedMessages []whatsAppRevokeCall
+	revokeErr       error
+	reactions       []whatsAppReactionCall
+	reactionErr     error
 }
 
 func (f *fakeWhatsAppPort) Run(ctx context.Context, sink domain.EventSink) error {
@@ -138,7 +195,7 @@ func (f *fakeWhatsAppPort) SendText(ctx context.Context, req domain.SendTextRequ
 		Index:           0,
 		Role:            domain.RolePrimary,
 		BridgeOwned:     true,
-		Capabilities:    domain.CanDelete | domain.CanRevoke | domain.CanEditText,
+		Capabilities:    domain.CanDelete | domain.CanRevoke | domain.CanEditText | domain.CanReact,
 		TopicGeneration: 1,
 	}
 	return domain.SendResult{
@@ -148,14 +205,32 @@ func (f *fakeWhatsAppPort) SendText(ctx context.Context, req domain.SendTextRequ
 }
 
 func (f *fakeWhatsAppPort) EditOwnText(ctx context.Context, ref domain.MessageRef, content domain.TextContent, salt string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.editErr != nil {
+		return f.editErr
+	}
+	f.editedMessages = append(f.editedMessages, whatsAppEditCall{Ref: ref, Content: content, Salt: salt})
 	return nil
 }
 
 func (f *fakeWhatsAppPort) Revoke(ctx context.Context, ref domain.MessageRef, salt string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.revokeErr != nil {
+		return f.revokeErr
+	}
+	f.revokedMessages = append(f.revokedMessages, whatsAppRevokeCall{Ref: ref, Salt: salt})
 	return nil
 }
 
 func (f *fakeWhatsAppPort) SetOwnReaction(ctx context.Context, ref domain.MessageRef, reaction, salt string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.reactionErr != nil {
+		return f.reactionErr
+	}
+	f.reactions = append(f.reactions, whatsAppReactionCall{Ref: ref, Reaction: reaction, Salt: salt})
 	return nil
 }
 
