@@ -35,6 +35,12 @@ func Load(path string, lookup func(string) (string, bool)) (Config, error) {
 			return Config{}, errors.New("invalid trailing configuration YAML")
 		}
 	}
+	if lookup == nil {
+		lookup = os.LookupEnv
+	}
+	if err := c.applyEnv(lookup); err != nil {
+		return Config{}, err
+	}
 	if err := c.Validate(); err != nil {
 		return Config{}, err
 	}
