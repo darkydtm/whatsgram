@@ -344,6 +344,19 @@ type Completion struct {
 	AppliedVersion SourceVersion
 	EchoKeys       []string
 }
+type StateStore interface {
+	ClaimInbox(context.Context, time.Time, time.Duration) (Event, string, error)
+	PlanEvent(context.Context, Event, string, []Delivery, time.Time) error
+	ClaimDelivery(context.Context, time.Time, time.Duration) (Delivery, error)
+	BeginSend(context.Context, int64, string, time.Time) error
+	CompleteDelivery(context.Context, int64, string, Completion, time.Time) error
+	FailDelivery(context.Context, int64, string, RecoveryDecision, time.Time) error
+	RecoverExpiredLeases(context.Context, time.Time) error
+	FindParts(context.Context, MessageRef) ([]DeliveredPart, error)
+	DiscoverChat(context.Context, ChatCandidate, int64) error
+	BindTopic(context.Context, string, TopicRef) error
+}
+
 type RecoveryDecision struct {
 	State       string
 	ErrorClass  ErrorClass

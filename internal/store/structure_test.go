@@ -9,6 +9,9 @@ import (
 	"github.com/darkydtm/whatsgram/internal/domain"
 )
 
+var _ domain.StateStore = (*Store)(nil)
+var _ domain.AdmissionStore = (*Store)(nil)
+
 func TestTopicCreationResultBindsAtomicallyAndFencesReplacement(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
