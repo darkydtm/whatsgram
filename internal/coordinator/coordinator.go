@@ -110,41 +110,55 @@ func (c *Coordinator) isKnownBridgeSend(key, targetID string) bool {
 }
 
 func (c *Coordinator) Run(ctx context.Context) error {
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	var wg sync.WaitGroup
-	errCh := make(chan error, 3)
+	errCh := make(chan error, 2)
 
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		if err := c.RunInboxLoop(ctx); err != nil && !errors.Is(err, context.Canceled) {
+		if err := c.RunInboxLoop(runCtx); err != nil && !errors.Is(err, context.Canceled) {
 			select {
 			case errCh <- err:
 			default:
 			}
+			cancel()
 		}
 	}()
 
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		if err := c.RunDeliveryLoop(ctx); err != nil && !errors.Is(err, context.Canceled) {
+		if err := c.RunDeliveryLoop(runCtx); err != nil && !errors.Is(err, context.Canceled) {
 			select {
 			case errCh <- err:
 			default:
 			}
+			cancel()
 		}
 	}()
 
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		c.runLeaseRecoveryLoop(ctx)
+		c.runLeaseRecoveryLoop(runCtx)
 	}()
 
-	<-ctx.Done()
+	var firstErr error
+	select {
+	case <-ctx.Done():
+	case firstErr = <-errCh:
+		cancel()
+	}
+
 	wg.Wait()
 	close(errCh)
 
+	if firstErr != nil {
+		return firstErr
+	}
 	for err := range errCh {
 		if err != nil {
 			return err

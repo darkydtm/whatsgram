@@ -647,3 +647,17 @@ func TestCoordinatorLifecycleShutdown(t *testing.T) {
 		t.Fatal("coordinator failed to stop within timeout")
 	}
 }
+
+func TestCoordinatorRunChildLoopError(t *testing.T) {
+	coord, _, _, _, _ := setupTestEnvironment(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	err := coord.Run(ctx)
+	if err == nil {
+		t.Fatal("expected deadline exceeded error from Run, got nil")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected context.DeadlineExceeded, got: %v", err)
+	}
+}
