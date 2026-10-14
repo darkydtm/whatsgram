@@ -7,7 +7,7 @@ import (
 
 func TestDefault(t *testing.T) {
 	c := Default()
-	if c.Telegram.Token != "" || c.Telegram.ChatID != 0 || len(c.Telegram.AllowedUserIDs) != 0 || c.Telegram.Endpoint != "https://api.telegram.org" || c.Telegram.LocalAPI {
+	if c.Telegram.Token.Reveal() != "" || c.Telegram.ChatID != 0 || len(c.Telegram.AllowedUserIDs) != 0 || c.Telegram.Endpoint != "https://api.telegram.org" || c.Telegram.LocalAPI {
 		t.Fatalf("unexpected telegram defaults")
 	}
 	if c.WhatsApp.PairingMode != "qr" || c.WhatsApp.Phone != "" || c.WhatsApp.HistoryPolicy != "none" {

@@ -1,4 +1,5 @@
 # Set WHATSGRAM_TELEGRAM_TOKEN in the process environment.
+# Keep the token a string; runtime adapters use Telegram.Token.Reveal().
 # Replace the fake chat and user IDs before running the bridge.
 telegram:
   token: ""

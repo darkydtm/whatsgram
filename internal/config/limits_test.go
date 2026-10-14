@@ -34,7 +34,7 @@ func TestValidateResources(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			c := validConfig()
 			tt.change(&c)
-			if err := c.Validate(); err == nil || strings.Contains(err.Error(), c.Telegram.Token) {
+			if err := c.Validate(); err == nil || strings.Contains(err.Error(), c.Telegram.Token.Reveal()) {
 				t.Fatal("expected secret-safe limit error")
 			}
 		})

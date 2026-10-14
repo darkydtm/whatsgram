@@ -48,6 +48,8 @@ func (c *Config) applyEnv(lookup func(string) (string, bool)) error {
 func setEnv(target interface{}, value string) error {
 	var err error
 	switch target := target.(type) {
+	case *Secret:
+		*target = NewSecret(value)
 	case *string:
 		*target = value
 	case *int64:

@@ -95,7 +95,7 @@ func TestLoadNilLookup(t *testing.T) {
 		}
 	}
 	c, err := Load("", nil)
-	if err != nil || !reflect.DeepEqual(c, validConfig()) {
+	if err != nil || !equalConfig(c, validConfig()) {
 		t.Fatal("nil lookup must read process environment")
 	}
 	if _, err := Load("", noEnv); err == nil {

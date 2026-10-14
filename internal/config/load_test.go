@@ -19,6 +19,14 @@ func writeYAML(t *testing.T, content string) string {
 
 func noEnv(string) (string, bool) { return "", false }
 
+func equalConfig(a, b Config) bool {
+	if a.Telegram.Token.Reveal() != b.Telegram.Token.Reveal() {
+		return false
+	}
+	a.Telegram.Token, b.Telegram.Token = Secret{}, Secret{}
+	return reflect.DeepEqual(a, b)
+}
+
 func TestLoadYAML(t *testing.T) {
 	path := writeYAML(t, `telegram:
   token: synthetic-secret
@@ -53,13 +61,13 @@ runtime:
 		t.Fatal(err)
 	}
 	want := Config{
-		Telegram: Telegram{Token: "synthetic-secret", ChatID: -1001234567890, AllowedUserIDs: []int64{42, 43}, Endpoint: "http://localhost:8081", LocalAPI: true},
+		Telegram: Telegram{Token: NewSecret("synthetic-secret"), ChatID: -1001234567890, AllowedUserIDs: []int64{42, 43}, Endpoint: "http://localhost:8081", LocalAPI: true},
 		WhatsApp: WhatsApp{PairingMode: "code", Phone: "15551234567", HistoryPolicy: "recent"},
 		Database: Database{Path: "custom/database.db", BusyTimeout: 4 * time.Second},
 		Media:    Media{TempDir: "custom/media", FFmpeg: "custom/ffmpeg", MaxBytes: 123456, MaxDuration: 4 * time.Minute, Timeout: 20 * time.Second, Workers: 3},
 		Runtime:  Runtime{QueueCapacity: 123, OperationTimeout: 20 * time.Second, MaxAttempts: 3, RetryBase: 2 * time.Second, RetryMax: 20 * time.Second, ShutdownTimeout: 10 * time.Second},
 	}
-	if !reflect.DeepEqual(c, want) {
+	if !equalConfig(c, want) {
 		t.Fatal("YAML overrides or normalization incorrect")
 	}
 }
@@ -69,7 +77,7 @@ func TestLoadYAMLDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(c, validConfig()) {
+	if !equalConfig(c, validConfig()) {
 		t.Fatal("omitted values must retain defaults")
 	}
 	if _, err := Load("", noEnv); err == nil {

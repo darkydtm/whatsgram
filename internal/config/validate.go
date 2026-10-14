@@ -7,7 +7,7 @@ import (
 )
 
 func (c Config) Validate() error {
-	if strings.TrimSpace(c.Telegram.Token) == "" {
+	if strings.TrimSpace(c.Telegram.Token.Reveal()) == "" {
 		return errors.New("invalid telegram.token")
 	}
 	if c.Telegram.ChatID >= 0 {

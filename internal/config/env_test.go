@@ -1,7 +1,6 @@
 package config
 
 import (
-	"reflect"
 	"testing"
 	"time"
 )
@@ -66,7 +65,7 @@ runtime:
   shutdown_timeout: 10s
 `)
 	want := Config{
-		Telegram: Telegram{Token: "env-secret", ChatID: -1009876543210, AllowedUserIDs: []int64{43, 44}, Endpoint: "http://127.0.0.1:8082", LocalAPI: true},
+		Telegram: Telegram{Token: NewSecret("env-secret"), ChatID: -1009876543210, AllowedUserIDs: []int64{43, 44}, Endpoint: "http://127.0.0.1:8082", LocalAPI: true},
 		WhatsApp: WhatsApp{PairingMode: "code", Phone: "15551234567", HistoryPolicy: "recent"},
 		Database: Database{Path: "env/database.db", BusyTimeout: 6 * time.Second},
 		Media:    Media{TempDir: "env/media", FFmpeg: "env/ffmpeg", MaxBytes: 654321, MaxDuration: 5 * time.Minute, Timeout: 25 * time.Second, Workers: 4},
@@ -77,7 +76,7 @@ runtime:
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !reflect.DeepEqual(c, want) {
+		if !equalConfig(c, want) {
 			t.Fatal("environment must override YAML and defaults")
 		}
 	}

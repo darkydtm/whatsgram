@@ -7,7 +7,7 @@ import (
 
 func validConfig() Config {
 	c := Default()
-	c.Telegram.Token = "synthetic-secret"
+	c.Telegram.Token = NewSecret("synthetic-secret")
 	c.Telegram.ChatID = -1001234567890
 	c.Telegram.AllowedUserIDs = []int64{42}
 	return c
@@ -21,8 +21,8 @@ func TestValidateRequiredAccess(t *testing.T) {
 		name   string
 		change func(*Config)
 	}{
-		{"token", func(c *Config) { c.Telegram.Token = "" }},
-		{"blank token", func(c *Config) { c.Telegram.Token = " \t" }},
+		{"token", func(c *Config) { c.Telegram.Token = NewSecret("") }},
+		{"blank token", func(c *Config) { c.Telegram.Token = NewSecret(" \t") }},
 		{"zero chat", func(c *Config) { c.Telegram.ChatID = 0 }},
 		{"positive chat", func(c *Config) { c.Telegram.ChatID = 42 }},
 		{"empty allowlist", func(c *Config) { c.Telegram.AllowedUserIDs = nil }},

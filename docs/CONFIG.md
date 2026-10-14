@@ -6,6 +6,8 @@ The `internal/config` package provides data only. It does not connect to Telegra
 func Default() Config
 func Load(path string, lookup func(string) (string, bool)) (Config, error)
 func (c Config) Validate() error
+func NewSecret(value string) Secret
+func (s Secret) Reveal() string
 ```
 
 `Config` contains concrete `Telegram`, `WhatsApp`, `Database`, `Media`, and `Runtime` values. `Default()` returns fresh safe resource defaults with no access credentials. It is deliberately invalid until a token, chat ID, and allowlist are supplied. `Validate()` checks a value without modifying it; `Load()` validates and then removes trailing endpoint slashes and deduplicates allowlist IDs in first-seen order. Any loading error returns a zero `Config`, never partially loaded secrets.
@@ -67,6 +69,8 @@ Database and FFmpeg paths cannot be blank. Paths are not created, expanded, or c
 
 ## Secret-safe diagnostics
 
-Errors name fixed fields or parser categories, never input values, YAML source lines, filesystem paths, or wrapped decoder errors. The package performs no logging. `Config` and `Telegram` values and pointers redact all standard `fmt` verbs, `String()`, and `GoString()`. Their JSON output is the fixed object `{"redacted":true}` rather than a configuration export, so copied secrets in other fields cannot leak through those surfaces.
+Errors name fixed fields or parser categories, never input values, YAML source lines, filesystem paths, or wrapped decoder errors. The package performs no logging. `Config`, `Telegram`, and `Secret` values and pointers redact ordinary `fmt` output, `String()`, and `GoString()`. The opaque token also keeps its raw bytes unreachable to fmt's recursive fallback when invalid verbs such as `%w` disable formatting methods, including inside slices, maps, and structs. JSON output is the fixed object `{"redacted":true}` rather than a configuration export. Config and Telegram JSON also hides secrets explicitly copied into other fields.
 
-The concrete token remains available to authorized consumers as `c.Telegram.Token`. Do not format individual sensitive fields, use reflection-based dumps, or serialize the configuration with other encoders. Redaction is not a security boundary against code that directly reads those values. Keep injected lookups trusted; this package cannot suppress logging, panic messages, or side effects inside a caller's lookup.
+`Telegram.Token` is a `Secret`, not a string. YAML and environment input still supply a string; YAML token values must have the string scalar tag, not numeric, boolean, sequence, or mapping types. For programmatic configuration, use `config.NewSecret(rawToken)`. Its zero value reveals an empty string. The representation holds raw bytes only in a private closure, not a recursively printable string field; no global secret registry is used. Separate nonempty secrets cannot be compared for equality with `==` or `reflect.DeepEqual`.
+
+Authorized runtime adapters obtain the actual string only through `c.Telegram.Token.Reveal()`. Treat that accessor as an explicit trusted boundary: do not log its result, copy it into other config fields, use unsafe memory dumps, or serialize exposed strings. Invalid-verb fallbacks can print nonsensitive fields; never put secrets in those fields. Redaction does not protect against code deliberately reading the accessor or process memory. Keep injected lookups trusted; this package cannot suppress logging, panic messages, or side effects inside a caller's lookup.

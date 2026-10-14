@@ -11,7 +11,7 @@ type Config struct {
 }
 
 type Telegram struct {
-	Token          string  `yaml:"token" json:"-"`
+	Token          Secret  `yaml:"token" json:"-"`
 	ChatID         int64   `yaml:"chat_id"`
 	AllowedUserIDs []int64 `yaml:"allowed_user_ids"`
 	Endpoint       string  `yaml:"endpoint"`
