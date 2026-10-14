@@ -3,7 +3,9 @@ package admin
 import "strings"
 
 type ParsedCommand struct {
-	Name string
+	Name     string
+	Mode     string
+	Argument PrivateValue
 }
 
 func (p Policy) parseCommand(in Input) Decision {
@@ -25,15 +27,37 @@ func (p Policy) parseCommand(in Input) Decision {
 		}
 		verb = name
 	}
+	command := ParsedCommand{Name: verb}
 	switch verb {
 	case "help", "status", "sync":
 		if len(fields) != 1 {
 			return invalidCommand()
 		}
+	case "pair":
+		if len(fields) == 2 && fields[1] == "qr" {
+			command.Mode = "qr"
+		} else if len(fields) == 3 && fields[1] == "code" && internationalDigits(fields[2]) {
+			command.Mode = "code"
+			command.Argument = privateValue(fields[2])
+		} else {
+			return invalidCommand()
+		}
 	default:
 		return invalidCommand()
 	}
-	return Decision{Kind: Command, Code: "parsed-command", Reason: "Parsed intent requires executor validation; no action has run.", Command: ParsedCommand{Name: verb}}
+	return Decision{Kind: Command, Code: "parsed-command", Reason: "Parsed intent requires executor validation; no action has run.", Command: command}
+}
+
+func internationalDigits(value string) bool {
+	if len(value) < 7 || len(value) > 15 || value[0] == '0' {
+		return false
+	}
+	for _, digit := range value {
+		if digit < '0' || digit > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func invalidCommand() Decision {
