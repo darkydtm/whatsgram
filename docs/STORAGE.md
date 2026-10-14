@@ -195,6 +195,10 @@ Remote per-operation rights/windows still need adapter validation.
 `CompleteDelivery` commits all returned parts, source-state acknowledgment,
 exact echoes, result and succeeded state atomically. Conflicting parts roll back
 the whole result. `AppliedVersion` must exactly equal the immutable intent.
+Acknowledgments preserve a greater observed source revision and monotonic
+deleted flags. Incomparable or equal-order-different observations conflict and
+roll back completion rather than replacing source state. This applies to both
+mutation targets and existing returned parts.
 A result received after a newer tombstone retains the native IDs as deleted
 metadata for compensation without restoring effective text. This is local
 state, not proof of remote deletion. Results after a replaced topic generation

@@ -69,6 +69,9 @@ func (s *Store) CompleteDelivery(ctx context.Context, id int64, token string, c 
 			if existingMessage != d.MessageID || existingIndex != p.Index || role != p.Role || owned != p.BridgeOwned || capabilities != p.Capabilities {
 				return ErrConflict
 			}
+			if err := acknowledgeSource(ctx, tx, d.MessageID, p.Ref, c.AppliedVersion, p.Deleted || tombstone); err != nil {
+				return err
+			}
 			if _, err := tx.ExecContext(ctx, "UPDATE bridge_part SET deleted=MAX(deleted,?),retired=MAX(retired,?) WHERE id=?", p.Deleted || tombstone, p.Retired, existingID); err != nil {
 				return safe(err)
 			}
@@ -89,8 +92,8 @@ func (s *Store) CompleteDelivery(ctx context.Context, id int64, token string, c 
 		}
 	}
 	if (d.Kind == "message.edit" || d.Kind == "message.revoke") && d.Target != nil {
-		if _, err := tx.ExecContext(ctx, `UPDATE bridge_source_state SET version=?,deleted=MAX(deleted,?) WHERE part_id=(SELECT id FROM bridge_part WHERE message_id=? AND platform=? AND remote_chat=? AND remote_author=? AND remote_id=?)`, version, d.Kind == "message.revoke" || tombstone, d.MessageID, d.Target.Platform, d.Target.Chat, d.Target.Author, d.Target.ID); err != nil {
-			return safe(err)
+		if err := acknowledgeSource(ctx, tx, d.MessageID, *d.Target, c.AppliedVersion, d.Kind == "message.revoke" || tombstone); err != nil {
+			return err
 		}
 	}
 	if d.Kind == "message.revoke" && d.Target != nil {
