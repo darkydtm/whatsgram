@@ -214,6 +214,9 @@ func (c *Coordinator) handleDeliveryError(ctx context.Context, d domain.Delivery
 			if delay <= 0 {
 				delay = time.Second
 			}
+			if c.cfg.Runtime.RetryMax > 0 && delay > c.cfg.Runtime.RetryMax {
+				delay = c.cfg.Runtime.RetryMax
+			}
 			decision := domain.RecoveryDecision{
 				State:       "pending",
 				ErrorClass:  adapterErr.Class,

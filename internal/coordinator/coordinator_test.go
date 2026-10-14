@@ -823,3 +823,50 @@ func TestCrossPlatformReplyMappingReverse(t *testing.T) {
 		t.Fatalf("expected nil ReplyTo for unmapped target, got: %+v", lastTg.Content.ReplyTo)
 	}
 }
+
+func TestRetryBackoffClampedToRuntimeMax(t *testing.T) {
+	coord, st, _, _, _ := setupTestEnvironment(t)
+	coord.cfg.Runtime.RetryMax = 3 * time.Second
+	ctx := context.Background()
+
+	waJID := "15550009999@s.whatsapp.net"
+	cand := domain.ChatCandidate{WhatsAppJID: waJID, Title: "Clamped", Source: "test"}
+	if err := st.DiscoverChat(ctx, cand, -10012345); err != nil {
+		t.Fatal(err)
+	}
+	topicRef := domain.TopicRef{ChatID: -10012345, ThreadID: 55, Generation: 1}
+	if err := st.BindTopic(ctx, waJID, topicRef); err != nil {
+		t.Fatal(err)
+	}
+
+	msgEvent := makeWhatsAppMessageEvent("clamp-1", waJID, waJID, false, "Hello clamp")
+	if _, err := st.Accept(ctx, msgEvent); err != nil {
+		t.Fatal(err)
+	}
+	if err := coord.StepInbox(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now()
+	delivery, err := st.ClaimDelivery(ctx, now, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	adapterErr := domain.AdapterError{
+		Class:      domain.Transient,
+		RetryAfter: 30 * time.Second,
+	}
+	if err := coord.handleDeliveryError(ctx, delivery, adapterErr, false, now); err != nil {
+		t.Fatal(err)
+	}
+
+	claimTime := now.Add(4 * time.Second)
+	redelivery, err := st.ClaimDelivery(ctx, claimTime, time.Minute)
+	if err != nil {
+		t.Fatalf("expected delivery to be claimable after clamped RetryMax (3s), got error: %v", err)
+	}
+	if redelivery.ID != delivery.ID {
+		t.Fatalf("expected delivery ID %d, got %d", delivery.ID, redelivery.ID)
+	}
+}
