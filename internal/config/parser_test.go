@@ -11,7 +11,7 @@ const accessYAML = "telegram:\n  token: synthetic-secret\n  chat_id: -1001234567
 func TestLoadRejectsInvalidYAML(t *testing.T) {
 	for _, tt := range []struct{ name, data string }{
 		{"unknown root", accessYAML + "synthetic-secret: true\n"},
-		{"unknown nested", "telegram:\n  token: synthetic-secret\n  synthetic-secret: true\n"},
+		{"unknown nested", accessYAML + "  synthetic-secret: true\n"},
 		{"trailing document", accessYAML + "---\ntelegram:\n  token: other-secret\n"},
 		{"trailing empty document", accessYAML + "---\n"},
 		{"trailing malformed document", accessYAML + "---\n[synthetic-secret\n"},

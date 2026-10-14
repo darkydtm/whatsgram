@@ -9,6 +9,11 @@ import (
 
 func TestOutputRedactsSecrets(t *testing.T) {
 	c := validConfig()
+	for _, output := range []string{c.String(), c.GoString(), c.Telegram.String(), c.Telegram.GoString()} {
+		if strings.Contains(output, c.Telegram.Token) || !strings.Contains(output, "redacted") {
+			t.Fatal("direct string methods must be redacted")
+		}
+	}
 	for _, value := range []interface{}{c, &c, c.Telegram, &c.Telegram} {
 		for _, format := range []string{"%v", "%+v", "%#v", "%s", "%q"} {
 			output := fmt.Sprintf(format, value)
