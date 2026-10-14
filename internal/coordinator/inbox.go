@@ -176,13 +176,27 @@ func (c *Coordinator) handleTelegramEvent(ctx context.Context, e domain.Event, t
 		}
 
 		var waPart *domain.DeliveredPart
+		var tgPart *domain.DeliveredPart
 		for i := range parts {
 			if parts[i].Ref.Platform == domain.WhatsApp && !parts[i].Deleted {
 				waPart = &parts[i]
-				break
+			}
+			if parts[i].Ref.Platform == domain.Telegram && !parts[i].Deleted {
+				tgPart = &parts[i]
 			}
 		}
-		if waPart == nil {
+		if waPart == nil || !waPart.BridgeOwned {
+			return c.completeInbox(ctx, e, token, now)
+		}
+
+		actorID, _ := strconv.ParseInt(e.Actor, 10, 64)
+		originAuthorID, _ := strconv.ParseInt(e.Target.Author, 10, 64)
+		if tgPart != nil && tgPart.Ref.Author != "" {
+			if origID, err := strconv.ParseInt(tgPart.Ref.Author, 10, 64); err == nil && origID > 0 {
+				originAuthorID = origID
+			}
+		}
+		if !c.policy.CanMutateOriginal(actorID, originAuthorID, c.policy.CanDriveAccount(actorID)) {
 			return c.completeInbox(ctx, e, token, now)
 		}
 
