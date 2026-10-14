@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/darkydtm/whatsgram/internal/domain"
 	"github.com/rs/zerolog"
@@ -19,7 +20,10 @@ import (
 )
 
 type Options struct {
-	Logger *slog.Logger
+	Logger        *slog.Logger
+	Now           func() time.Time
+	LookupMessage func(context.Context, domain.MessageRef) (MessageMetadata, error)
+	OperationTime func(context.Context, string) (time.Time, error)
 }
 
 type networkClient interface {
@@ -34,6 +38,7 @@ type Client struct {
 	device  *store.Device
 	logger  *slog.Logger
 	mu      sync.Mutex
+	options Options
 }
 
 func New(ctx context.Context, device *store.Device, options Options) (*Client, error) {
@@ -54,7 +59,10 @@ func New(ctx context.Context, device *store.Device, options Options) (*Client, e
 	cli.ManualHistorySyncDownload = true
 	cli.DisableManualHistorySyncReceipt = true
 	cli.BackgroundEventCtx = privateContext(ctx)
-	return &Client{client: cli, network: cli, device: device, logger: logger}, nil
+	if options.Now == nil {
+		options.Now = time.Now
+	}
+	return &Client{client: cli, network: cli, device: device, logger: logger, options: options}, nil
 }
 
 type libraryLog struct{}
