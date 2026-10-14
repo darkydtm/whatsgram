@@ -28,6 +28,15 @@ func refKey(ref domain.MessageRef) string {
 	data, _ := json.Marshal([]string{string(ref.Platform), ref.Chat, ref.Author, ref.ID})
 	return string(data)
 }
+func admissionKey(e domain.Event) string {
+	author, id := "", ""
+	if e.Target != nil {
+		author = e.Target.Author
+		id = e.Target.ID
+	}
+	data, _ := json.Marshal([]string{string(e.Source), e.Chat, author, id, e.Actor, e.Key, e.Version.StreamEpoch})
+	return string(data)
+}
 func (s *Store) Accept(ctx context.Context, e domain.Event) (domain.Admission, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -52,9 +61,10 @@ func (s *Store) accept(ctx context.Context, tx *sql.Tx, e domain.Event) (domain.
 		return domain.Admission{}, ErrInvalid
 	}
 	digest := fmt.Sprintf("%x", sha256.Sum256(payload))
+	key := admissionKey(e)
 	var id int64
 	var previous string
-	err = tx.QueryRowContext(ctx, "SELECT id,digest FROM bridge_inbox WHERE platform=? AND dedupe_key=?", e.Source, e.Key).Scan(&id, &previous)
+	err = tx.QueryRowContext(ctx, "SELECT id,digest FROM bridge_inbox WHERE platform=? AND dedupe_key=?", e.Source, key).Scan(&id, &previous)
 	if err == nil {
 		if previous != digest {
 			return domain.Admission{}, ErrConflict
@@ -79,7 +89,7 @@ func (s *Store) accept(ctx context.Context, tx *sql.Tx, e domain.Event) (domain.
 	if !e.Kind.Known() {
 		state = "quarantined"
 	}
-	result, err := tx.ExecContext(ctx, "INSERT INTO bridge_inbox(platform,dedupe_key,event_kind,target_key,payload,digest,state,available_at_ms) VALUES (?,?,?,?,?,?,?,?)", e.Source, e.Key, e.Kind, target, payload, digest, state, time.Now().UnixMilli())
+	result, err := tx.ExecContext(ctx, "INSERT INTO bridge_inbox(platform,dedupe_key,event_kind,target_key,payload,digest,state,available_at_ms) VALUES (?,?,?,?,?,?,?,?)", e.Source, key, e.Kind, target, payload, digest, state, time.Now().UnixMilli())
 	if err != nil {
 		return domain.Admission{}, safe(err)
 	}

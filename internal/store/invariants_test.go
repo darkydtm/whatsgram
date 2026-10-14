@@ -71,6 +71,16 @@ func TestBeginRevalidatesMappedTargetAndCapabilities(t *testing.T) {
 func TestTwoStoresClaimDeliveryOnce(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
+	var sequence int
+	var name, path string
+	if err := s.db.QueryRowContext(ctx, "PRAGMA database_list").Scan(&sequence, &name, &path); err != nil {
+		t.Fatal(err)
+	}
+	other, err := Open(ctx, path, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer other.Close()
 	now := time.Now().Add(time.Second)
 	chat := activeChat(t, s)
 	e, tok := leaseEvent(t, s, event("1"), now)
@@ -79,9 +89,13 @@ func TestTwoStoresClaimDeliveryOnce(t *testing.T) {
 	}
 	var wg sync.WaitGroup
 	out := make(chan error, 2)
-	for i := 0; i < 2; i++ {
+	for _, worker := range []*Store{s, other} {
 		wg.Add(1)
-		go func() { defer wg.Done(); _, err := s.ClaimDelivery(ctx, now, time.Minute); out <- err }()
+		go func(worker *Store) {
+			defer wg.Done()
+			_, err := worker.ClaimDelivery(ctx, now, time.Minute)
+			out <- err
+		}(worker)
 	}
 	wg.Wait()
 	close(out)

@@ -91,7 +91,7 @@ func TestAdmissionDeduplicatesAndRejectsConflictingPayload(t *testing.T) {
 		t.Fatal("unknown dropped", err)
 	}
 	var state string
-	if err := s.db.QueryRowContext(ctx, "SELECT state FROM bridge_inbox WHERE dedupe_key='future'").Scan(&state); err != nil || state != "quarantined" {
+	if err := s.db.QueryRowContext(ctx, "SELECT state FROM bridge_inbox WHERE json_extract(dedupe_key,'$[5]')='future'").Scan(&state); err != nil || state != "quarantined" {
 		t.Fatal(state, err)
 	}
 }
@@ -116,7 +116,7 @@ func TestTelegramBatchCursorCommitsOrRollsBackTogether(t *testing.T) {
 		t.Fatal("cursor advanced", cursor, err)
 	}
 	var n int
-	if err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM bridge_inbox WHERE dedupe_key='3'").Scan(&n); err != nil || n != 0 {
+	if err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM bridge_inbox WHERE json_extract(dedupe_key,'$[5]')='3'").Scan(&n); err != nil || n != 0 {
 		t.Fatal("partial batch", n, err)
 	}
 	if err := s.AcceptTelegramBatch(ctx, nil, 2, "epoch"); !errors.Is(err, ErrConflict) {
@@ -124,6 +124,27 @@ func TestTelegramBatchCursorCommitsOrRollsBackTogether(t *testing.T) {
 	}
 	if err := s.AcceptTelegramBatch(ctx, nil, 1, "new-epoch"); !errors.Is(err, ErrConflict) {
 		t.Fatal("unapproved epoch replaced", err)
+	}
+}
+
+func TestAdmissionKeysIncludeChatAuthorAndNativeContext(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	original := event("native-id")
+	if _, err := s.Accept(ctx, original); err != nil {
+		t.Fatal(err)
+	}
+	other := event("native-id")
+	other.Chat = "-200"
+	other.Target.Chat = other.Chat
+	if admission, err := s.Accept(ctx, other); err != nil || !admission.Inserted {
+		t.Fatal("cross-chat key collision", admission, err)
+	}
+	other = event("native-id")
+	other.Target.Author = "99"
+	other.Actor = "99"
+	if admission, err := s.Accept(ctx, other); err != nil || !admission.Inserted {
+		t.Fatal("cross-author key collision", admission, err)
 	}
 }
 
