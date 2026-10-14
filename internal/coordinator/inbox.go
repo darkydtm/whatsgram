@@ -275,21 +275,32 @@ func parseTelegramInput(e domain.Event) (admin.Input, string) {
 
 func normalizeCommandText(text string) string {
 	trimmed := strings.TrimSpace(text)
-	if trimmed == "/pair" {
-		return "/pair qr"
-	}
 	fields := strings.Fields(trimmed)
-	if len(fields) == 2 && fields[0] == "/pair" {
-		if isDigits(fields[1]) {
-			return "/pair code " + fields[1]
+	if len(fields) == 0 {
+		return text
+	}
+
+	cmdVerb := fields[0]
+	atBot := ""
+	if verb, botSuffix, hasBot := strings.Cut(fields[0], "@"); hasBot {
+		cmdVerb = verb
+		atBot = "@" + botSuffix
+	}
+
+	if cmdVerb == "/pair" {
+		if len(fields) == 1 {
+			return cmdVerb + atBot + " qr"
+		}
+		if len(fields) == 2 && isDigits(fields[1]) {
+			return cmdVerb + atBot + " code " + fields[1]
 		}
 	}
-	if len(fields) == 3 && fields[0] == "/bind" {
+	if cmdVerb == "/bind" && len(fields) == 3 {
 		if isDigits(fields[1]) && strings.Contains(fields[2], "@") {
-			return fmt.Sprintf("/bind topic %s %s", fields[2], fields[1])
+			return fmt.Sprintf("%s%s topic %s %s", cmdVerb, atBot, fields[2], fields[1])
 		}
 		if strings.Contains(fields[1], "@") && isDigits(fields[2]) {
-			return fmt.Sprintf("/bind topic %s %s", fields[1], fields[2])
+			return fmt.Sprintf("%s%s topic %s %s", cmdVerb, atBot, fields[1], fields[2])
 		}
 	}
 	return text

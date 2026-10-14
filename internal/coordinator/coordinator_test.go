@@ -870,3 +870,56 @@ func TestRetryBackoffClampedToRuntimeMax(t *testing.T) {
 		t.Fatalf("expected delivery ID %d, got %d", delivery.ID, redelivery.ID)
 	}
 }
+
+func TestBotAddressedCommands(t *testing.T) {
+	coord, st, tgPort, _, _ := setupTestEnvironment(t)
+	ctx := context.Background()
+
+	qrEvent := makeTelegramMessageEvent("100", -10012345, 42, 0, "/pair@TestBot")
+	if _, err := st.Accept(ctx, qrEvent); err != nil {
+		t.Fatal(err)
+	}
+	if err := coord.StepInbox(ctx); err != nil {
+		t.Fatal(err)
+	}
+	lastTg := tgPort.LastSentRequest()
+	if !strings.Contains(lastTg.Content.Text, "WhatsApp QR Pairing") {
+		t.Fatalf("expected QR pairing reply for /pair@TestBot, got: %s", lastTg.Content.Text)
+	}
+
+	codeEvent := makeTelegramMessageEvent("101", -10012345, 42, 0, "/pair@TestBot 15551234567")
+	if _, err := st.Accept(ctx, codeEvent); err != nil {
+		t.Fatal(err)
+	}
+	if err := coord.StepInbox(ctx); err != nil {
+		t.Fatal(err)
+	}
+	lastTg = tgPort.LastSentRequest()
+	if !strings.Contains(lastTg.Content.Text, "WhatsApp Pairing Code") {
+		t.Fatalf("expected code pairing reply for /pair@TestBot <phone>, got: %s", lastTg.Content.Text)
+	}
+
+	bindEvent := makeTelegramMessageEvent("102", -10012345, 42, 0, "/bind@TestBot 60 15550003333@s.whatsapp.net")
+	if _, err := st.Accept(ctx, bindEvent); err != nil {
+		t.Fatal(err)
+	}
+	if err := coord.StepInbox(ctx); err != nil {
+		t.Fatal(err)
+	}
+	lastTg = tgPort.LastSentRequest()
+	if !strings.Contains(lastTg.Content.Text, "Successfully bound topic 60") {
+		t.Fatalf("expected bind reply for /bind@TestBot, got: %s", lastTg.Content.Text)
+	}
+
+	sentCountBefore := len(tgPort.sentRequests)
+	otherBotEvent := makeTelegramMessageEvent("103", -10012345, 42, 0, "/pair@OtherBot")
+	if _, err := st.Accept(ctx, otherBotEvent); err != nil {
+		t.Fatal(err)
+	}
+	if err := coord.StepInbox(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(tgPort.sentRequests) != sentCountBefore {
+		t.Fatalf("expected command addressed to other bot to be ignored, but got response: %s", tgPort.LastSentRequest().Content.Text)
+	}
+}
