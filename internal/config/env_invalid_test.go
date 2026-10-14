@@ -56,7 +56,7 @@ func TestLoadEmptyOptionalEnvironment(t *testing.T) {
 	if _, err := Load(path, mapLookup(accessEnv())); err == nil {
 		t.Fatal("valid environment must not hide unknown YAML fields")
 	}
-	path = writeYAML(t, accessYAML+"whatsapp:\n  phone: \"15551234567\"\nmedia:\n  temp_dir: yaml/media\n")
+	path = writeYAML(t, accessYAML+"  local_api: true\nwhatsapp:\n  phone: \"15551234567\"\nmedia:\n  temp_dir: yaml/media\n")
 	c, err := Load(path, mapLookup(map[string]string{
 		"WHATSGRAM_WHATSAPP_PHONE":     "",
 		"WHATSGRAM_MEDIA_TEMP_DIR":     "",

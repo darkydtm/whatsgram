@@ -61,7 +61,7 @@ Code pairing requires a phone with 7-15 ASCII digits, a nonzero first digit, no 
 
 ## Resource bounds
 
-All durations must be greater than zero and at most 24 hours. Media bytes must be 1 through 10 GiB (10,737,418,240 bytes). Workers must be 1-64, queue capacity 1-65,536, and max attempts 1-100. Retry base must not exceed retry max. Max attempts includes the initial attempt by convention for future consumers. Limits are defensive configuration ceilings, not a promise that Telegram or WhatsApp accepts that media size or duration. Local Telegram mode does not remove WhatsApp limits.
+All durations must be greater than zero and at most 24 hours. Media bytes must be 1 through 10 GiB (10,737,418,240 bytes). Workers must be 1-64, queue capacity 1-65,536, and max attempts 1-100. Retry base must not exceed retry max. Limits are defensive configuration ceilings, not a promise that Telegram or WhatsApp accepts that media size or duration. Local Telegram mode does not remove WhatsApp limits.
 
 Database and FFmpeg paths cannot be blank. Paths are not created, expanded, or checked for existence by this package. Resource consumers must perform their own runtime checks, safe directory permissions, API-specific media limits, and shutdown/cancellation handling.
 
