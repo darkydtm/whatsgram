@@ -57,7 +57,7 @@ Environment integers are decimal and range checked. Allowlist entries permit sur
 
 The chat ID must be nonzero and negative, representing the selected supergroup; the loader cannot verify the remote chat type or membership. Every allowed user ID must be positive. The allowlist is mandatory and must not be interpreted as allowing all users when empty.
 
-Endpoints permit arbitrary HTTPS hosts and paths, or HTTP only with the literal host `localhost`, `127.0.0.1`, or `[::1]`. Userinfo, query strings (including a bare `?`), fragments (including a bare `#`), missing hosts, other schemes, and ports outside 1-65535 fail. Endpoint checks do not resolve DNS or probe network services. `local_api: true` is explicit mode data; it neither permits remote HTTP nor increases any media limit.
+Endpoints permit arbitrary HTTPS hosts and paths, or HTTP only with the literal host `localhost`, `127.0.0.1`, or `[::1]`. Userinfo, query strings (including a bare `?`), fragments (including a bare `#`), missing hosts, malformed or unbracketed IPv6 authorities, explicitly empty ports, other schemes, and ports outside 1-65535 fail. Bracketed hosts must be valid IPv6 literals without zone identifiers. Endpoint checks do not resolve DNS or probe network services. `local_api: true` is explicit mode data; it neither permits remote HTTP nor increases any media limit.
 
 Code pairing requires a phone with 7-15 ASCII digits, a nonzero first digit, no `+`, spaces, or punctuation. QR mode permits an empty phone; any supplied phone must still satisfy the same format. This is format validation, not proof of a valid or reachable telephone number. History is opt-in `recent` or default `none`; configuration never initiates archive/history crawling.
 
