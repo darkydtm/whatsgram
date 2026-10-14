@@ -44,7 +44,7 @@ func TestLoadRejectsNonintegerYAML(t *testing.T) {
 }
 
 func TestLoadIntegerAliasesAndMerges(t *testing.T) {
-	for _, data := range []string{
+	for i, data := range []string{
 		"telegram:\n  chat_id: &id -1001234567890.9\n  allowed_user_ids: [*id]\n",
 		"telegram:\n  allowed_user_ids: &ids [42.9]\n  <<: {allowed_user_ids: *ids}\n",
 		"media: &limits\n  workers: 2.9\n  <<: *limits\n",
@@ -53,26 +53,44 @@ func TestLoadIntegerAliasesAndMerges(t *testing.T) {
 		"telegram:\n  <<: {chat_id: -1e100, allowed_user_ids: [42]}\n",
 		"telegram: &access\n  chat_id: -1001234567890.9\n<<: {telegram: *access}\n",
 		"media:\n  workers: &workers 2.9\nruntime:\n  max_attempts: *workers\n",
+		"telegram:\n  token: &key chat_id\n  *key: -1001234567890.9\n",
+		"telegram:\n  token: &key allowed_user_ids\n  *key: [42.9]\n",
+		"media:\n  ffmpeg: &key workers\n  *key: 2.9\n",
+		"media:\n  ffmpeg: &key max_bytes\n  *key: 50.9\n",
+		"media:\n  ffmpeg: &key queue_capacity\nruntime:\n  *key: 256.9\n",
+		"media:\n  ffmpeg: &key max_attempts\nruntime:\n  *key: 5.9\n",
+		"media:\n  ffmpeg: &merge !!merge <<\n  *merge: {workers: 2.9}\n",
 	} {
-		c, err := Load(writeYAML(t, data), mapLookup(accessEnv()))
-		if err == nil || !reflect.DeepEqual(c, Config{}) {
-			t.Fatal("aliases and merged integer fields must be checked before environment overrides")
-		}
+		t.Run(strconv.Itoa(i), func(t *testing.T) {
+			c, err := Load(writeYAML(t, data), mapLookup(accessEnv()))
+			if err == nil || !reflect.DeepEqual(c, Config{}) {
+				t.Fatal("aliases and merged integer fields must be checked before environment overrides")
+			}
+		})
 	}
 }
 
 func TestLoadIntegerSpellingsAndBoundaries(t *testing.T) {
-	for _, value := range []string{"42", "+42", "0x2a", "0o52", "052", "0b101010", "4_2", "9223372036854775807"} {
+	for _, tt := range []struct {
+		value string
+		want  int64
+	}{
+		{"42", 42}, {"+42", 42}, {"0x2a", 42}, {"0o52", 42}, {"052", 42}, {"0b101010", 42}, {"4_2", 42}, {"9223372036854775807", 9223372036854775807},
+	} {
 		values := accessEnv()
 		delete(values, "WHATSGRAM_TELEGRAM_ALLOWED_USER_IDS")
-		c, err := Load(writeYAML(t, "telegram:\n  allowed_user_ids: ["+value+"]\n"), mapLookup(values))
-		if err != nil || len(c.Telegram.AllowedUserIDs) != 1 {
+		c, err := Load(writeYAML(t, "telegram:\n  allowed_user_ids: ["+tt.value+"]\n"), mapLookup(values))
+		if err != nil || !reflect.DeepEqual(c.Telegram.AllowedUserIDs, []int64{tt.want}) {
 			t.Fatal("legal YAML integer spelling must load")
 		}
 	}
 	values := accessEnv()
+	c, err := Load(writeYAML(t, "media: &limits\n  workers: &count 3\n  max_bytes: 50\nruntime:\n  <<: [{queue_capacity: *count}, {max_attempts: *count}]\n<<: {media: *limits}\n"), mapLookup(values))
+	if err != nil || c.Media.Workers != 3 || c.Media.MaxBytes != 50 || c.Runtime.QueueCapacity != 3 || c.Runtime.MaxAttempts != 3 {
+		t.Fatal("legal aliases and merge sequences must retain exact integer values")
+	}
 	delete(values, "WHATSGRAM_TELEGRAM_CHAT_ID")
-	c, err := Load(writeYAML(t, "telegram:\n  chat_id: -9223372036854775808\n"), mapLookup(values))
+	c, err = Load(writeYAML(t, "telegram:\n  chat_id: -9223372036854775808\n"), mapLookup(values))
 	if err != nil || c.Telegram.ChatID != -9223372036854775808 {
 		t.Fatal("minimum int64 chat ID must load exactly")
 	}

@@ -59,9 +59,13 @@ func validYAMLIntegers(root *yaml.Node) bool {
 							}
 							continue
 						}
+						var fieldName string
+						if err := name.Decode(&fieldName); err != nil {
+							return false
+						}
 						for j := 0; j < typeOf.NumField(); j++ {
 							field := typeOf.Field(j)
-							if field.Tag.Get("yaml") == name.Value && !check(value, field.Type) {
+							if field.Tag.Get("yaml") == fieldName && !check(value, field.Type) {
 								return false
 							}
 						}
