@@ -3,6 +3,9 @@ package admin
 import (
 	"strconv"
 	"strings"
+	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 type ParsedCommand struct {
@@ -10,6 +13,8 @@ type ParsedCommand struct {
 	Mode            string
 	Argument        PrivateValue
 	TargetMessageID int64
+	ThreadID        int64
+	Timer           time.Duration
 }
 
 func (p Policy) parseCommand(in Input) Decision {
@@ -54,6 +59,29 @@ func (p Policy) parseCommand(in Input) Decision {
 		} else {
 			return invalidCommand()
 		}
+	case "timer":
+		if len(fields) != 2 || in.ThreadID <= 0 {
+			return invalidCommand()
+		}
+		switch fields[1] {
+		case "off":
+		case "24h":
+			command.Timer = 24 * time.Hour
+		case "7d":
+			command.Timer = 7 * 24 * time.Hour
+		case "90d":
+			command.Timer = 90 * 24 * time.Hour
+		default:
+			return invalidCommand()
+		}
+		command.ThreadID = in.ThreadID
+	case "rename", "rename-wa":
+		label := strings.TrimSpace(strings.TrimPrefix(text, fields[0]))
+		if in.ThreadID <= 0 || !validLabel(label) {
+			return invalidCommand()
+		}
+		command.ThreadID = in.ThreadID
+		command.Argument = privateValue(label)
 	case "pair":
 		if len(fields) == 2 && fields[1] == "qr" {
 			command.Mode = "qr"
@@ -92,6 +120,18 @@ func positiveID(value string) (int64, bool) {
 	}
 	id, err := strconv.ParseInt(value, 10, 32)
 	return id, err == nil
+}
+
+func validLabel(value string) bool {
+	if !utf8.ValidString(value) || utf8.RuneCountInString(value) < 1 || utf8.RuneCountInString(value) > 128 {
+		return false
+	}
+	for _, r := range value {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+			return false
+		}
+	}
+	return true
 }
 
 func invalidCommand() Decision {
