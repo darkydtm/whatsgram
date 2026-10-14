@@ -25,6 +25,19 @@ func Load(path string, lookup func(string) (string, bool)) (Config, error) {
 		if len(data) > 1024*1024 {
 			return Config{}, errors.New("configuration exceeds size limit")
 		}
+		var document yaml.Node
+		if err := yaml.Unmarshal(data, &document); err != nil || document.Kind != yaml.DocumentNode || len(document.Content) != 1 || document.Content[0].Kind != yaml.MappingNode {
+			return Config{}, errors.New("invalid configuration YAML")
+		}
+		pending := []*yaml.Node{&document}
+		for len(pending) > 0 {
+			node := pending[len(pending)-1]
+			pending = pending[:len(pending)-1]
+			if node.Tag == "!!null" {
+				return Config{}, errors.New("invalid null configuration value")
+			}
+			pending = append(pending, node.Content...)
+		}
 		decoder := yaml.NewDecoder(bytes.NewReader(data))
 		decoder.KnownFields(true)
 		if err := decoder.Decode(&c); err != nil {
