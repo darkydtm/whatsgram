@@ -125,6 +125,9 @@ func (s *Store) BeginSend(ctx context.Context, id int64, token string, now time.
 	if err := json.Unmarshal(payload, &d); err != nil {
 		return ErrStorage
 	}
+	if err := validateStoredIntent(ctx, tx, id, d); err != nil {
+		return err
+	}
 	if d.Target != nil {
 		var owned, deleted, retired bool
 		var caps uint64

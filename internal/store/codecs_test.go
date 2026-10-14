@@ -46,6 +46,7 @@ func TestPrivatePersistenceRetainsPayloadAcrossReopen(t *testing.T) {
 	}
 	d := intent(chat, "private-intent")
 	d.Text = e.Text
+	d.ExpectedVersion = e.Version
 	if err := s.PlanEvent(ctx, leased, token, []domain.Delivery{d}, now); err != nil {
 		t.Fatal(err)
 	}

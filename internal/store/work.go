@@ -133,6 +133,14 @@ func (s *Store) PlanEventWithTimers(ctx context.Context, e domain.Event, token s
 	if e.Target != nil && (e.Kind == domain.MessageCreate || e.Kind == domain.MessageEdit) && e.Actor != e.Target.Author {
 		return ErrConflict
 	}
+	for _, d := range deliveries {
+		if d.ExpectedVersion != e.Version {
+			return ErrConflict
+		}
+		if e.Target != nil && d.Kind != string(e.Kind) {
+			return ErrInvalid
+		}
+	}
 	var chatID, messageID int64
 	var suppress bool
 	if e.Target != nil {

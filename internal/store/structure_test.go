@@ -34,6 +34,7 @@ func TestTopicCreationResultBindsAtomicallyAndFencesReplacement(t *testing.T) {
 	d.Kind = "topic.create"
 	d.WhatsAppSendID = ""
 	d.Text = &domain.TextContent{Text: "chat"}
+	d.ExpectedVersion = e.Version
 	if err := s.PlanEvent(ctx, leased, tok, []domain.Delivery{d}, now); err != nil {
 		t.Fatal(err)
 	}

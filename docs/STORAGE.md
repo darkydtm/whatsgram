@@ -157,7 +157,10 @@ messages can proceed independently. Expired leases require explicit recovery.
 `PlanEvent` verifies the immutable admitted event, lease, source ownership for
 create/edit, stored source/effective version, tombstone, chat/generation and
 intent bounds in one transaction. It updates source/message/part state, inserts
-outbox intents and completes inbox work with no external calls.
+outbox intents and completes inbox work with no external calls. Each intent's
+ExpectedVersion must equal the admitted Event.Version exactly, independent of
+transformed output Text. Message operation kinds must match the admitted kind;
+invalid intent versions roll back all state and leave the inbox leased.
 `PlanEventWithTimers` adds absolute timer scheduling in the same transaction;
 a timer with `MessageID=0` binds to that plan's logical message. A stale or
 duplicate state revision suppresses its outbox/timer plan; late edits cannot
@@ -181,6 +184,11 @@ Every WA intent reserves its caller-provided outgoing ID transactionally with a
 unique platform/chat/send-ID constraint. `BeginSend` commits send-started state
 and an exact WA echo reservation before transport. It verifies mapped mutation
 targets, stored ownership/capability and current deletion/retirement state.
+It binds the stored payload to outbox identity and the admitted causal version.
+Edits and revokes require the current effective version; a dependent create may
+precede a newer comparable edit. Timer revokes instead require the exact current
+message version and a completed expiry plan at that version. Topic operations
+use the admitted chat-event version, never a comparison to wall-clock time.
 `MatchEcho` requires the exact operation tuple and digest, never prefix or FromMe.
 Remote per-operation rights/windows still need adapter validation.
 

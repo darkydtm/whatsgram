@@ -73,7 +73,9 @@ func TestClaimsStartLeaseAfterWriterWait(t *testing.T) {
 				e, token := leaseEvent(t, s, event("claim-wait"), now.Add(time.Second))
 				var deliveries []domain.Delivery
 				if kind == "delivery" {
-					deliveries = []domain.Delivery{intent(chat, "claim-wait")}
+					d := intent(chat, "claim-wait")
+					d.ExpectedVersion = e.Version
+					deliveries = []domain.Delivery{d}
 				}
 				if err := s.PlanEvent(ctx, e, token, deliveries, now); err != nil {
 					t.Fatal(err)
