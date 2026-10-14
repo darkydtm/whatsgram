@@ -20,8 +20,8 @@ const (
 
 // File size and character limits.
 const (
-	MaxTelegramBotFileSize = 50 * 1024 * 1024  // 50MB
-	MaxWhatsAppMediaSize   = 64 * 1024 * 1024  // 64MB
+	MaxTelegramBotFileSize  = 50 * 1024 * 1024  // 50MB
+	MaxWhatsAppMediaSize    = 64 * 1024 * 1024  // 64MB
 	MaxWhatsAppDocumentSize = 100 * 1024 * 1024 // 100MB
 
 	TelegramTextLimit    = 4096
