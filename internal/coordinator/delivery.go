@@ -143,6 +143,10 @@ func (c *Coordinator) sendTelegram(ctx context.Context, delivery domain.Delivery
 			if errors.Is(editErr, context.Canceled) || errors.Is(editErr, context.DeadlineExceeded) {
 				return domain.SendResult{}, editErr
 			}
+			var adapterErr domain.AdapterError
+			if errors.As(editErr, &adapterErr) && (adapterErr.Class == domain.Transient || adapterErr.Class == domain.RateLimited) {
+				return domain.SendResult{}, editErr
+			}
 		}
 
 		// Fallback notice when Telegram representation cannot be edited
@@ -175,6 +179,10 @@ func (c *Coordinator) sendTelegram(ctx context.Context, delivery domain.Delivery
 			return domain.SendResult{AcceptedAt: time.Now().UTC()}, nil
 		}
 		if errors.Is(delErr, context.Canceled) || errors.Is(delErr, context.DeadlineExceeded) {
+			return domain.SendResult{}, delErr
+		}
+		var adapterErr domain.AdapterError
+		if errors.As(delErr, &adapterErr) && (adapterErr.Class == domain.Transient || adapterErr.Class == domain.RateLimited) {
 			return domain.SendResult{}, delErr
 		}
 
