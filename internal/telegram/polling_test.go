@@ -4,11 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -33,6 +37,129 @@ func (s *checkpoint) AcceptTelegramBatch(ctx context.Context, events []domain.Ev
 		}
 	}
 	return s.Store.AcceptTelegramBatch(ctx, events, offset, epoch)
+}
+
+func TestPollingRateLimitCancellationCapsAndEpochDiagnostic(t *testing.T) {
+	cases := []struct {
+		name, result string
+		offset       int64
+		old          bool
+		class        domain.ErrorClass
+	}{
+		{"rate_limit", `{"ok":false,"error_code":429,"description":"` + testToken + `","parameters":{"retry_after":2}}`, 0, false, ""},
+		{"unidentifiable", `{"ok":true,"result":[{"message":{}}]}`, 0, false, domain.Permanent},
+		{"oversize_update", `{"ok":true,"result":[{"update_id":1,"future":"` + strings.Repeat("x", MaxUpdateBytes) + `"}]}`, 0, false, domain.Permanent},
+		{"batch_limit", `{"ok":true,"result":[` + strings.TrimSuffix(strings.Repeat(`{"update_id":1},`, 101), ",") + `]}`, 0, false, domain.Permanent},
+		{"lower_epoch", `{"ok":true,"result":[{"update_id":1}]}`, 43, false, ""},
+		{"idle_epoch", `{"ok":true,"result":[]}`, 43, true, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			db, err := store.Open(context.Background(), filepath.Join(t.TempDir(), "db"), time.Second)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			if err := db.AcceptTelegramBatch(context.Background(), nil, tc.offset, "epoch"); err != nil {
+				t.Fatal(err)
+			}
+			var count atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if initialization(w, r) {
+					return
+				}
+				count.Add(1)
+				fmt.Fprint(w, tc.result)
+			}))
+			defer srv.Close()
+			c, err := New(testConfig(srv.URL), srv.Client(), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+			defer cancel()
+			options := PollOptions{LastContact: time.Now()}
+			if tc.old {
+				options.LastContact = time.Now().Add(-8 * 24 * time.Hour)
+			}
+			err = c.RunPolling(ctx, db, options)
+			if tc.name == "rate_limit" {
+				if !errors.Is(err, context.DeadlineExceeded) || count.Load() != 1 {
+					t.Fatal("429 delay/cancellation violated")
+				}
+				time.Sleep(50 * time.Millisecond)
+				if count.Load() != 1 {
+					t.Fatal("polling continued after return")
+				}
+			} else if strings.Contains(tc.name, "epoch") {
+				if !errors.Is(err, ErrEpochReviewRequired) {
+					t.Fatalf("epoch diagnostic = %v", err)
+				}
+				if tc.old && count.Load() != 0 {
+					t.Fatal("sent unsafe old offset")
+				}
+			} else {
+				var classified domain.AdapterError
+				if !errors.As(err, &classified) || classified.Class != tc.class || count.Load() != 1 {
+					t.Fatalf("caps/error = %v", err)
+				}
+			}
+			cursor, err := db.Cursor(context.Background(), "telegram")
+			if err != nil || cursor.NextOffset != tc.offset || cursor.Epoch != "epoch" {
+				t.Fatal("invalid/rate limited response checkpointed")
+			}
+		})
+	}
+}
+
+func TestPollingRequestCancellationAndMissingBatchBinding(t *testing.T) {
+	db, err := store.Open(context.Background(), filepath.Join(t.TempDir(), "db"), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	started := make(chan struct{})
+	finished := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if initialization(w, r) {
+			return
+		}
+		_, _ = io.Copy(io.Discard, r.Body)
+		close(started)
+		<-r.Context().Done()
+		close(finished)
+	}))
+	defer srv.Close()
+	c, err := New(testConfig(srv.URL), srv.Client(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Run(context.Background(), nil); !errors.Is(err, ErrBatchStoreRequired) {
+		t.Fatalf("missing batch store = %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	c.BindPolling(db, PollOptions{})
+	go func() { result <- c.Run(ctx, nil) }()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("poll never started")
+	}
+	cancel()
+	select {
+	case err := <-result:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("poll did not cancel")
+	}
+	select {
+	case <-finished:
+	case <-time.After(time.Second):
+		t.Fatal("wire request did not cancel")
+	}
 }
 
 func TestPollingCommitsWholeBatchBeforeAcknowledgmentAndRestarts(t *testing.T) {
