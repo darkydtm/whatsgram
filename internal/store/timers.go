@@ -92,6 +92,8 @@ func (s *Store) ClaimTimer(ctx context.Context, now time.Time, ttl time.Duration
 		return Timer{}, safe(err)
 	}
 	defer tx.Rollback()
+	now = fenceTime(now)
+	until = now.Add(ttl).UnixMilli()
 	if _, err := tx.ExecContext(ctx, `UPDATE bridge_timer SET state='cancelled' WHERE state='pending' AND EXISTS (SELECT 1 FROM bridge_message m WHERE m.id=bridge_timer.message_id AND (m.tombstone=1 OR m.state_version!=bridge_timer.target_version OR (bridge_timer.kind='expire' AND m.kept=1)))`); err != nil {
 		return Timer{}, safe(err)
 	}

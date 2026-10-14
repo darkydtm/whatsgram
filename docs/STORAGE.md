@@ -144,7 +144,8 @@ All mutations require current random fencing tokens and an unexpired deadline.
 Deadlines are checked against the greater of supplied `now` and actual local
 wall time after acquiring the write transaction and before its final state
 transition. Workers cannot extend a lease by passing a stale claim timestamp.
-Lease TTL is one millisecond through one hour; no renewal API exists yet. Set
+Claims derive the lease start after pool and writer-lock waits. Lease TTL is
+one millisecond through one hour; no renewal API exists yet. Set
 network deadlines shorter than the lease. `ErrNoWork` is the sole no-work
 sentinel; `ErrLeaseLost` is never silently treated as success.
 

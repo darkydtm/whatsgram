@@ -53,6 +53,8 @@ func (s *Store) ClaimDelivery(ctx context.Context, now time.Time, ttl time.Durat
 		return domain.Delivery{}, safe(err)
 	}
 	defer tx.Rollback()
+	now = fenceTime(now)
+	until = now.Add(ttl).UnixMilli()
 	var id int64
 	var payload []byte
 	err = tx.QueryRowContext(ctx, `SELECT o.id,o.payload FROM bridge_outbox o JOIN bridge_chat c ON c.id=o.chat_id WHERE o.state='pending' AND o.available_at_ms<=? AND o.topic_generation=c.topic_generation AND ((o.operation='topic.create' AND c.state='discovered') OR (o.operation!='topic.create' AND c.state='active')) AND (o.depends_on_id IS NULL OR EXISTS (SELECT 1 FROM bridge_outbox dep WHERE dep.id=o.depends_on_id AND dep.state='succeeded')) AND NOT EXISTS (SELECT 1 FROM bridge_outbox other WHERE other.id!=o.id AND other.state IN ('pending','leased','sending','uncertain','blocked') AND ((other.message_id=o.message_id AND (other.id<o.id OR other.state IN ('leased','sending','uncertain'))) OR (other.chat_id=o.chat_id AND (other.message_id IS NULL OR o.message_id IS NULL) AND (other.id<o.id OR other.state IN ('leased','sending','uncertain'))))) ORDER BY o.id LIMIT 1`, now.UnixMilli()).Scan(&id, &payload)

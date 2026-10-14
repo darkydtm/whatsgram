@@ -51,6 +51,8 @@ func (s *Store) ClaimInbox(ctx context.Context, now time.Time, ttl time.Duration
 		return domain.Event{}, "", safe(err)
 	}
 	defer tx.Rollback()
+	now = fenceTime(now)
+	until = now.Add(ttl).UnixMilli()
 	var id int64
 	var payload []byte
 	err = tx.QueryRowContext(ctx, `SELECT i.id,i.payload FROM bridge_inbox i WHERE i.state='pending' AND i.available_at_ms<=? AND NOT EXISTS (SELECT 1 FROM bridge_inbox other WHERE other.state='leased' AND (other.target_key=i.target_key OR EXISTS (SELECT 1 FROM bridge_part p JOIN bridge_part other_part ON other_part.message_id=p.message_id WHERE json_array(p.platform,p.remote_chat,p.remote_author,p.remote_id)=i.target_key AND json_array(other_part.platform,other_part.remote_chat,other_part.remote_author,other_part.remote_id)=other.target_key))) ORDER BY i.id LIMIT 1`, now.UnixMilli()).Scan(&id, &payload)
@@ -77,13 +79,29 @@ func (s *Store) DeferInbox(ctx context.Context, id int64, token string, availabl
 	if availableAt.Before(now) {
 		return ErrInvalid
 	}
-	return changed(s.db.ExecContext(ctx, "UPDATE bridge_inbox SET state='pending',available_at_ms=?,lease_token=NULL,lease_until_ms=NULL WHERE id=? AND state='leased' AND lease_token=? AND lease_until_ms>?", availableAt.UnixMilli(), id, token, fenceTime(now).UnixMilli()))
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return safe(err)
+	}
+	defer tx.Rollback()
+	if err := changed(tx.ExecContext(ctx, "UPDATE bridge_inbox SET state='pending',available_at_ms=?,lease_token=NULL,lease_until_ms=NULL WHERE id=? AND state='leased' AND lease_token=? AND lease_until_ms>?", availableAt.UnixMilli(), id, token, fenceTime(now).UnixMilli())); err != nil {
+		return err
+	}
+	return safe(tx.Commit())
 }
 func (s *Store) QuarantineInbox(ctx context.Context, id int64, token string, now time.Time) error {
 	if now.IsZero() {
 		return ErrInvalid
 	}
-	return changed(s.db.ExecContext(ctx, "UPDATE bridge_inbox SET state='quarantined',lease_token=NULL,lease_until_ms=NULL WHERE id=? AND state='leased' AND lease_token=? AND lease_until_ms>?", id, token, fenceTime(now).UnixMilli()))
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return safe(err)
+	}
+	defer tx.Rollback()
+	if err := changed(tx.ExecContext(ctx, "UPDATE bridge_inbox SET state='quarantined',lease_token=NULL,lease_until_ms=NULL WHERE id=? AND state='leased' AND lease_token=? AND lease_until_ms>?", id, token, fenceTime(now).UnixMilli())); err != nil {
+		return err
+	}
+	return safe(tx.Commit())
 }
 func (s *Store) PlanEvent(ctx context.Context, e domain.Event, token string, deliveries []domain.Delivery, now time.Time) error {
 	return s.PlanEventWithTimers(ctx, e, token, deliveries, nil, now)
