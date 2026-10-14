@@ -50,7 +50,7 @@ func (c *Client) BeginQR(ctx context.Context) (<-chan domain.PairingNotice, erro
 				select {
 				case out <- domain.PairingNotice{
 					Kind:      "qr",
-					Secret:    item.Code,
+					Secret:    domain.NewPairingSecret(item.Code),
 					ExpiresAt: c.options.Now().Add(timeout),
 				}:
 				case <-ctx.Done():
@@ -79,7 +79,7 @@ func (c *Client) BeginPhoneCode(ctx context.Context, phone string) (domain.Pairi
 	}
 	return domain.PairingNotice{
 		Kind:      "code",
-		Secret:    code,
+		Secret:    domain.NewPairingSecret(code),
 		ExpiresAt: c.options.Now().Add(160 * time.Second),
 	}, nil
 }

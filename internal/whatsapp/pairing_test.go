@@ -64,7 +64,7 @@ func TestPairingSuccess(t *testing.T) {
 		t.Fatal(err)
 	}
 	item := <-out
-	if item.Kind != "qr" || item.Secret != "TEST-QR-CODE" {
+	if item.Kind != "qr" || item.Secret.Reveal() != "TEST-QR-CODE" {
 		t.Fatalf("unexpected QR notice: %+v", item)
 	}
 
@@ -72,7 +72,7 @@ func TestPairingSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if notice.Kind != "code" || notice.Secret != "123-456" {
+	if notice.Kind != "code" || notice.Secret.Reveal() != "123-456" {
 		t.Fatalf("unexpected code notice: %+v", notice)
 	}
 }
