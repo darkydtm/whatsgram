@@ -9,7 +9,7 @@ import (
 
 func TestOutputRedactsSecrets(t *testing.T) {
 	c := validConfig()
-	for _, output := range []string{c.String(), c.GoString(), c.Telegram.String(), c.Telegram.GoString()} {
+	for _, output := range []string{c.String(), c.GoString(), c.Telegram.String(), c.Telegram.GoString(), c.Telegram.Token.String(), c.Telegram.Token.GoString()} {
 		if strings.Contains(output, c.Telegram.Token.Reveal()) || !strings.Contains(output, "redacted") {
 			t.Fatal("direct string methods must be redacted")
 		}

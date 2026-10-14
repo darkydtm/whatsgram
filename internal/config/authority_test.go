@@ -8,7 +8,7 @@ func TestValidateEndpointAuthorities(t *testing.T) {
 	for _, endpoint := range []string{
 		"http://::1:8081", "http://::1", "https://2001:db8::1:443", "https://example.org::443",
 		"http://localhost:", "https://example.org:", "http://[::1]:", "https://[2001:db8::1]:",
-		"https://[::1::]", "https://[not-an-ip]", "http://[127.0.0.1]", "https://[2001:db8:1]",
+		"https://[::1::]", "https://[not-an-ip]", "http://[127.0.0.1]", "https://[2001:db8:1]", "https://[fe80::1%25eth0]",
 		"http://localhost.example.org", "http://127.0.0.1.example.org", "http://[::ffff:127.0.0.1]",
 		"http://127.1", "http://2130706433", "http://localhost@remote.example.org", "http://remote.example.org",
 	} {

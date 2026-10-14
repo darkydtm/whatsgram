@@ -17,7 +17,7 @@ func TestLoadRejectsNonintegerYAML(t *testing.T) {
 		{"runtime", "max_attempts", "RUNTIME_MAX_ATTEMPTS", "5"},
 	}
 	for _, field := range fields {
-		for _, value := range []string{"42.9", "2.0", "1e2", "-1e100", "9223372036854775808", "-9223372036854775809", "!!int 1e2", "\"42\""} {
+		for _, value := range []string{"42.9", "2.9", "50.9", "2.0", "1e2", "-1e100", "9223372036854775808", "-9223372036854775809", "!!int 1e2", "\"42\""} {
 			t.Run(field.key+"/"+value, func(t *testing.T) {
 				if field.key == "chat_id" && value == "42.9" {
 					value = "-1001234567890.9"

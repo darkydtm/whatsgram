@@ -12,7 +12,7 @@ func TestOutputInvalidVerbsHideTokenBytes(t *testing.T) {
 	canary := "synthetic-fmt-canary-3f8d6b920ca1"
 	c := validConfig()
 	c.Telegram.Token = NewSecret(canary)
-	direct := []interface{}{c, &c, c.Telegram, &c.Telegram, c.Telegram.Token, &c.Telegram.Token}
+	direct := []interface{}{c, &c, c.Telegram, &c.Telegram, c.Telegram.Token, &c.Telegram.Token, []Config{c}, map[string]Config{"config": c}, struct{ Config Config }{c}, []Telegram{c.Telegram}, []Secret{c.Telegram.Token}}
 	for _, value := range direct {
 		for _, nested := range []interface{}{
 			value,
