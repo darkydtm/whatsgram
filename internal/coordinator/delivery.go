@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/darkydtm/whatsgram/internal/domain"
+	"github.com/darkydtm/whatsgram/internal/media"
 	"github.com/darkydtm/whatsgram/internal/store"
 )
 
@@ -117,13 +119,86 @@ func (c *Coordinator) sendTelegram(ctx context.Context, delivery domain.Delivery
 			content = c.resolveReplyTo(ctx, domain.Telegram, *delivery.Text)
 		}
 
+		isCaption := strings.Contains(delivery.OperationKey, "caption")
+		limit := media.TelegramTextLimit
+		if isCaption {
+			limit = media.TelegramCaptionLimit
+		}
+
+		runes := []rune(content.Text)
+		if len(runes) > limit {
+			var chunks []string
+			var roles []string
+
+			if isCaption {
+				p, o := media.SplitCaption(content.Text, media.TelegramCaptionLimit)
+				chunks = append(chunks, p)
+				roles = append(roles, domain.RolePrimary)
+				if o != "" {
+					overflows := media.SplitText(o, media.TelegramTextLimit)
+					for _, ov := range overflows {
+						if ov != "" {
+							chunks = append(chunks, ov)
+							roles = append(roles, domain.RoleCaptionOverflow)
+						}
+					}
+				}
+			} else {
+				chunks = media.SplitText(content.Text, media.TelegramTextLimit)
+				for i := range chunks {
+					if i == 0 {
+						roles = append(roles, domain.RolePrimary)
+					} else {
+						roles = append(roles, domain.RoleText)
+					}
+				}
+			}
+
+			var allParts []domain.DeliveredPart
+			for i, chunk := range chunks {
+				req := domain.SendTextRequest{
+					OperationKey:  fmt.Sprintf("%s:part:%d", delivery.OperationKey, i),
+					TelegramTopic: topic,
+					Content: domain.TextContent{
+						Text: chunk,
+					},
+				}
+				if i == 0 {
+					req.Content.ReplyTo = content.ReplyTo
+					req.Content.Entities = content.Entities
+					req.Content.ForwardLabel = content.ForwardLabel
+					req.Content.MentionTargets = content.MentionTargets
+				}
+				res, err := c.tgPort.SendText(ctx, req)
+				if err != nil {
+					return domain.SendResult{}, err
+				}
+				for _, p := range res.Parts {
+					p.Index = i
+					p.Role = roles[i]
+					allParts = append(allParts, p)
+				}
+			}
+			return domain.SendResult{
+				Parts:      allParts,
+				AcceptedAt: time.Now().UTC(),
+			}, nil
+		}
+
 		req := domain.SendTextRequest{
 			OperationKey:  delivery.OperationKey,
 			TelegramTopic: topic,
 			Content:       content,
 		}
 
-		return c.tgPort.SendText(ctx, req)
+		res, err := c.tgPort.SendText(ctx, req)
+		if err != nil {
+			return domain.SendResult{}, err
+		}
+		if strings.Contains(delivery.OperationKey, "fallback") && len(res.Parts) > 0 {
+			res.Parts[0].Role = domain.RoleFallback
+		}
+		return res, nil
 
 	case "message.edit":
 		if delivery.Target == nil {
@@ -133,10 +208,28 @@ func (c *Coordinator) sendTelegram(ctx context.Context, delivery domain.Delivery
 		if delivery.Text != nil {
 			content = c.resolveReplyTo(ctx, domain.Telegram, *delivery.Text)
 		}
-		part, err := c.store.Part(ctx, *delivery.Target)
-		canEdit := err == nil && part.BridgeOwned && (part.Capabilities&domain.CanEditText != 0)
+
+		targetRef := *delivery.Target
+		isCaption := strings.Contains(delivery.OperationKey, "caption")
+		parts, err := c.store.FindParts(ctx, *delivery.Target)
+		if err == nil {
+			for _, p := range parts {
+				if p.Ref.Platform == domain.Telegram && !p.Deleted {
+					if isCaption && (p.Role == domain.RoleCaptionOverflow || p.Capabilities&domain.CanEditCaption != 0) {
+						targetRef = p.Ref
+						break
+					} else if !isCaption && (p.Role == domain.RolePrimary || p.Index == 0) {
+						targetRef = p.Ref
+						break
+					}
+				}
+			}
+		}
+
+		part, err := c.store.Part(ctx, targetRef)
+		canEdit := err == nil && part.BridgeOwned && (part.Capabilities&(domain.CanEditText|domain.CanEditCaption) != 0)
 		if canEdit {
-			editErr := c.tgPort.EditText(ctx, *delivery.Target, content)
+			editErr := c.tgPort.EditText(ctx, targetRef, content)
 			if editErr == nil {
 				return domain.SendResult{AcceptedAt: time.Now().UTC()}, nil
 			}
@@ -156,7 +249,7 @@ func (c *Coordinator) sendTelegram(ctx context.Context, delivery domain.Delivery
 			TelegramTopic: topic,
 			Content: domain.TextContent{
 				Text:    noticeText,
-				ReplyTo: delivery.Target,
+				ReplyTo: &targetRef,
 			},
 		}
 		res, sendErr := c.tgPort.SendText(ctx, req)
@@ -164,7 +257,7 @@ func (c *Coordinator) sendTelegram(ctx context.Context, delivery domain.Delivery
 			return domain.SendResult{}, sendErr
 		}
 		if len(res.Parts) > 0 {
-			existingParts, _ := c.store.FindParts(ctx, *delivery.Target)
+			existingParts, _ := c.store.FindParts(ctx, targetRef)
 			res.Parts[0].Index = len(existingParts)
 			res.Parts[0].Role = domain.RoleRevisionNotice
 		}
@@ -174,16 +267,42 @@ func (c *Coordinator) sendTelegram(ctx context.Context, delivery domain.Delivery
 		if delivery.Target == nil {
 			return domain.SendResult{}, domain.AdapterError{Class: domain.Permanent, Code: "invalid_target"}
 		}
-		delErr := c.tgPort.Delete(ctx, *delivery.Target)
-		if delErr == nil {
+		parts, err := c.store.FindParts(ctx, *delivery.Target)
+		var tgParts []domain.DeliveredPart
+		if err == nil {
+			for _, p := range parts {
+				if p.Ref.Platform == domain.Telegram {
+					tgParts = append(tgParts, p)
+				}
+			}
+		}
+		if len(tgParts) == 0 {
+			tgParts = []domain.DeliveredPart{{Ref: *delivery.Target}}
+		}
+
+		var deletedParts []domain.DeliveredPart
+		var lastErr error
+		for _, p := range tgParts {
+			delErr := c.tgPort.Delete(ctx, p.Ref)
+			if delErr != nil {
+				lastErr = delErr
+			} else {
+				p.Deleted = true
+				deletedParts = append(deletedParts, p)
+			}
+		}
+
+		if len(deletedParts) > 0 && lastErr == nil {
 			return domain.SendResult{AcceptedAt: time.Now().UTC()}, nil
 		}
-		if errors.Is(delErr, context.Canceled) || errors.Is(delErr, context.DeadlineExceeded) {
-			return domain.SendResult{}, delErr
-		}
-		var adapterErr domain.AdapterError
-		if errors.As(delErr, &adapterErr) && (adapterErr.Class == domain.Transient || adapterErr.Class == domain.RateLimited) {
-			return domain.SendResult{}, delErr
+		if lastErr != nil {
+			if errors.Is(lastErr, context.Canceled) || errors.Is(lastErr, context.DeadlineExceeded) {
+				return domain.SendResult{}, lastErr
+			}
+			var adapterErr domain.AdapterError
+			if errors.As(lastErr, &adapterErr) && (adapterErr.Class == domain.Transient || adapterErr.Class == domain.RateLimited) {
+				return domain.SendResult{}, lastErr
+			}
 		}
 
 		// If deletion fails (too old or rights lost): post notification "🗑 Message revoked by sender"
@@ -197,7 +316,10 @@ func (c *Coordinator) sendTelegram(ctx context.Context, delivery domain.Delivery
 		}
 		res, sendErr := c.tgPort.SendText(ctx, req)
 		if sendErr != nil {
-			return domain.SendResult{}, delErr
+			if lastErr != nil {
+				return domain.SendResult{}, lastErr
+			}
+			return domain.SendResult{}, sendErr
 		}
 		if len(res.Parts) > 0 {
 			existingParts, _ := c.store.FindParts(ctx, *delivery.Target)
@@ -232,6 +354,44 @@ func (c *Coordinator) sendWhatsApp(ctx context.Context, delivery domain.Delivery
 			content = c.resolveReplyTo(ctx, domain.WhatsApp, *delivery.Text)
 		}
 
+		runes := []rune(content.Text)
+		if len(runes) > media.WhatsAppTextLimit {
+			chunks := media.SplitText(content.Text, media.WhatsAppTextLimit)
+			var allParts []domain.DeliveredPart
+			for i, chunk := range chunks {
+				sendID := c.waPort.AllocateSendID()
+				c.recordBridgeSend(sendID)
+				req := domain.SendTextRequest{
+					OperationKey:   fmt.Sprintf("%s:part:%d", delivery.OperationKey, i),
+					WhatsAppSendID: sendID,
+					WhatsAppChat:   delivery.EchoActor,
+					Content: domain.TextContent{
+						Text: chunk,
+					},
+				}
+				if i == 0 {
+					req.Content.ReplyTo = content.ReplyTo
+				}
+				res, err := c.waPort.SendText(ctx, req)
+				if err != nil {
+					return domain.SendResult{}, err
+				}
+				for _, p := range res.Parts {
+					p.Index = i
+					if i == 0 {
+						p.Role = domain.RolePrimary
+					} else {
+						p.Role = domain.RoleText
+					}
+					allParts = append(allParts, p)
+				}
+			}
+			return domain.SendResult{
+				Parts:      allParts,
+				AcceptedAt: time.Now().UTC(),
+			}, nil
+		}
+
 		req := domain.SendTextRequest{
 			OperationKey:   delivery.OperationKey,
 			WhatsAppSendID: delivery.WhatsAppSendID,
@@ -249,7 +409,25 @@ func (c *Coordinator) sendWhatsApp(ctx context.Context, delivery domain.Delivery
 		if delivery.Text != nil {
 			content = c.resolveReplyTo(ctx, domain.WhatsApp, *delivery.Text)
 		}
-		err := c.waPort.EditOwnText(ctx, *delivery.Target, content, delivery.WhatsAppSendID)
+
+		targetRef := *delivery.Target
+		isCaption := strings.Contains(delivery.OperationKey, "caption")
+		parts, err := c.store.FindParts(ctx, *delivery.Target)
+		if err == nil {
+			for _, p := range parts {
+				if p.Ref.Platform == domain.WhatsApp && !p.Deleted {
+					if isCaption && (p.Role == domain.RoleCaptionOverflow || p.Capabilities&domain.CanEditCaption != 0) {
+						targetRef = p.Ref
+						break
+					} else if !isCaption && (p.Role == domain.RolePrimary || p.Index == 0) {
+						targetRef = p.Ref
+						break
+					}
+				}
+			}
+		}
+
+		err = c.waPort.EditOwnText(ctx, targetRef, content, delivery.WhatsAppSendID)
 		if err != nil {
 			return domain.SendResult{}, err
 		}
@@ -259,9 +437,32 @@ func (c *Coordinator) sendWhatsApp(ctx context.Context, delivery domain.Delivery
 		if delivery.Target == nil {
 			return domain.SendResult{}, domain.AdapterError{Class: domain.Permanent, Code: "invalid_target"}
 		}
-		err := c.waPort.Revoke(ctx, *delivery.Target, delivery.WhatsAppSendID)
-		if err != nil {
-			return domain.SendResult{}, err
+		parts, err := c.store.FindParts(ctx, *delivery.Target)
+		var waParts []domain.DeliveredPart
+		if err == nil {
+			for _, p := range parts {
+				if p.Ref.Platform == domain.WhatsApp {
+					waParts = append(waParts, p)
+				}
+			}
+		}
+		if len(waParts) == 0 {
+			waParts = []domain.DeliveredPart{{Ref: *delivery.Target}}
+		}
+
+		var deletedParts []domain.DeliveredPart
+		for _, p := range waParts {
+			sendID := delivery.WhatsAppSendID
+			if len(waParts) > 1 {
+				sendID = c.waPort.AllocateSendID()
+				c.recordBridgeSend(sendID)
+			}
+			err := c.waPort.Revoke(ctx, p.Ref, sendID)
+			if err != nil {
+				return domain.SendResult{}, err
+			}
+			p.Deleted = true
+			deletedParts = append(deletedParts, p)
 		}
 		return domain.SendResult{AcceptedAt: time.Now().UTC()}, nil
 
@@ -298,12 +499,23 @@ func (c *Coordinator) resolveReplyTo(ctx context.Context, targetPlatform domain.
 
 	parts, err := c.store.FindParts(ctx, *content.ReplyTo)
 	if err == nil {
+		var fallback *domain.MessageRef
 		for _, p := range parts {
 			if p.Ref.Platform == targetPlatform && !p.Deleted {
-				mapped := p.Ref
-				content.ReplyTo = &mapped
-				return content
+				if p.Index == 0 || p.Role == domain.RolePrimary {
+					mapped := p.Ref
+					content.ReplyTo = &mapped
+					return content
+				}
+				if fallback == nil {
+					ref := p.Ref
+					fallback = &ref
+				}
 			}
+		}
+		if fallback != nil {
+			content.ReplyTo = fallback
+			return content
 		}
 	}
 

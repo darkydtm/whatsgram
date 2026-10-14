@@ -165,6 +165,60 @@ func (c *Coordinator) handleTelegramEvent(ctx context.Context, e domain.Event, t
 		return c.store.PlanEvent(ctx, e, token, []domain.Delivery{delivery}, now)
 	}
 
+	if e.Kind == domain.MessageRevoke {
+		if e.Target == nil {
+			return c.completeInbox(ctx, e, token, now)
+		}
+
+		parts, err := c.store.FindParts(ctx, *e.Target)
+		if err != nil {
+			return c.store.DeferInbox(ctx, e.InboxID, token, now.Add(retryDelay), now)
+		}
+
+		var waPart *domain.DeliveredPart
+		var tgPart *domain.DeliveredPart
+		for i := range parts {
+			if parts[i].Ref.Platform == domain.WhatsApp && !parts[i].Deleted {
+				waPart = &parts[i]
+			}
+			if parts[i].Ref.Platform == domain.Telegram && !parts[i].Deleted {
+				tgPart = &parts[i]
+			}
+		}
+		if waPart == nil || !waPart.BridgeOwned {
+			return c.completeInbox(ctx, e, token, now)
+		}
+
+		actorID, _ := strconv.ParseInt(e.Actor, 10, 64)
+		originAuthorID, _ := strconv.ParseInt(e.Target.Author, 10, 64)
+		if tgPart != nil && tgPart.Ref.Author != "" {
+			if origID, err := strconv.ParseInt(tgPart.Ref.Author, 10, 64); err == nil && origID > 0 {
+				originAuthorID = origID
+			}
+		}
+		if !c.policy.CanMutateOriginal(actorID, originAuthorID, c.policy.CanDriveAccount(actorID)) {
+			return c.completeInbox(ctx, e, token, now)
+		}
+
+		sendID := c.waPort.AllocateSendID()
+		c.recordBridgeSend(sendID)
+
+		delivery := domain.Delivery{
+			OperationKey:    fmt.Sprintf("tg:revoke:%d:%s", e.InboxID, sendID),
+			Platform:        domain.WhatsApp,
+			Kind:            "message.revoke",
+			ChatID:          chat.ID,
+			TopicGeneration: chat.Generation,
+			ExpectedVersion: e.Version,
+			Target:          &waPart.Ref,
+			WhatsAppSendID:  sendID,
+			EchoActor:       chat.WhatsAppJID,
+		}
+
+		c.pendingCount.Add(1)
+		return c.store.PlanEvent(ctx, e, token, []domain.Delivery{delivery}, now)
+	}
+
 	if e.Kind == domain.MessageEdit {
 		if e.Target == nil {
 			return c.completeInbox(ctx, e, token, now)
@@ -226,8 +280,13 @@ func (c *Coordinator) handleTelegramEvent(ctx context.Context, e domain.Event, t
 		sendID := c.waPort.AllocateSendID()
 		c.recordBridgeSend(sendID)
 
+		opKey := fmt.Sprintf("tg:edit:%d:%s", e.InboxID, sendID)
+		if strings.Contains(string(e.Metadata), "caption") || strings.Contains(e.Key, "caption") {
+			opKey = fmt.Sprintf("tg:edit:caption:%d:%s", e.InboxID, sendID)
+		}
+
 		delivery := domain.Delivery{
-			OperationKey:    fmt.Sprintf("tg:edit:%d:%s", e.InboxID, sendID),
+			OperationKey:    opKey,
 			Platform:        domain.WhatsApp,
 			Kind:            "message.edit",
 			ChatID:          chat.ID,
@@ -248,7 +307,20 @@ func (c *Coordinator) handleTelegramEvent(ctx context.Context, e domain.Event, t
 		textContent = &domain.TextContent{Text: rawText}
 	}
 	if textContent == nil {
-		return c.completeInbox(ctx, e, token, now)
+		reason := "unknown format"
+		if len(e.Metadata) > 0 {
+			var m struct {
+				Reason string `json:"reason"`
+			}
+			if json.Unmarshal(e.Metadata, &m) == nil && m.Reason != "" {
+				reason = m.Reason
+			}
+		}
+		fallbackNotice := fmt.Sprintf("[Unsupported media: %s]", reason)
+		if reason == "animated-sticker" || strings.Contains(e.Key, "sticker") {
+			fallbackNotice = "[Unsupported animated sticker: forwarded as fallback]"
+		}
+		textContent = &domain.TextContent{Text: fallbackNotice}
 	}
 
 	if textContent.ReplyTo != nil && textContent.ReplyTo.Platform != domain.WhatsApp {
@@ -259,8 +331,13 @@ func (c *Coordinator) handleTelegramEvent(ctx context.Context, e domain.Event, t
 	sendID := c.waPort.AllocateSendID()
 	c.recordBridgeSend(sendID)
 
+	opKey := fmt.Sprintf("tg:%d:%s", e.InboxID, sendID)
+	if strings.Contains(string(e.Metadata), "caption") || strings.Contains(e.Key, "caption") {
+		opKey = fmt.Sprintf("%s:caption", opKey)
+	}
+
 	delivery := domain.Delivery{
-		OperationKey:    fmt.Sprintf("tg:%d:%s", e.InboxID, sendID),
+		OperationKey:    opKey,
 		Platform:        domain.WhatsApp,
 		Kind:            "message.create",
 		ChatID:          chat.ID,
@@ -305,11 +382,25 @@ func (c *Coordinator) handleWhatsAppEvent(ctx context.Context, e domain.Event, t
 		if err != nil {
 			return c.store.DeferInbox(ctx, e.InboxID, token, now.Add(retryDelay), now)
 		}
+		isCaption := strings.Contains(string(e.Metadata), "caption") || strings.Contains(e.Key, "caption") || strings.Contains(e.Version.Tie, "caption")
 		var tgPart *domain.DeliveredPart
 		for i := range parts {
 			if parts[i].Ref.Platform == domain.Telegram && !parts[i].Deleted {
-				tgPart = &parts[i]
-				break
+				if isCaption && (parts[i].Role == domain.RoleCaptionOverflow || parts[i].Capabilities&domain.CanEditCaption != 0) {
+					tgPart = &parts[i]
+					break
+				} else if !isCaption && (parts[i].Role == domain.RolePrimary || parts[i].Index == 0) {
+					tgPart = &parts[i]
+					break
+				}
+			}
+		}
+		if tgPart == nil {
+			for i := range parts {
+				if parts[i].Ref.Platform == domain.Telegram && !parts[i].Deleted {
+					tgPart = &parts[i]
+					break
+				}
 			}
 		}
 		if tgPart == nil {
@@ -324,8 +415,13 @@ func (c *Coordinator) handleWhatsAppEvent(ctx context.Context, e domain.Event, t
 			formatted = &resolved
 		}
 
+		opKey := fmt.Sprintf("wa:edit:%d:%s", e.InboxID, e.Key)
+		if isCaption {
+			opKey = fmt.Sprintf("wa:edit:caption:%d:%s", e.InboxID, e.Key)
+		}
+
 		delivery := domain.Delivery{
-			OperationKey:    fmt.Sprintf("wa:edit:%d:%s", e.InboxID, e.Key),
+			OperationKey:    opKey,
 			Platform:        domain.Telegram,
 			Kind:            "message.edit",
 			ChatID:          chat.ID,
@@ -409,7 +505,29 @@ func (c *Coordinator) handleWhatsAppEvent(ctx context.Context, e domain.Event, t
 	default:
 		formatted := formatWhatsAppText(e, isFromMe)
 		if formatted == nil {
-			return c.completeInbox(ctx, e, token, now)
+			reason := "unsupported media"
+			if len(e.Metadata) > 0 {
+				var m struct {
+					Reason string `json:"reason"`
+				}
+				if json.Unmarshal(e.Metadata, &m) == nil && m.Reason != "" {
+					reason = m.Reason
+				}
+			}
+			fallbackText := fmt.Sprintf("[Unsupported media: %s]", reason)
+			if reason == "animated-sticker" || strings.Contains(e.Key, "sticker") {
+				fallbackText = "[Unsupported animated sticker: forwarded as fallback]"
+			}
+			formatted = &domain.TextContent{Text: fallbackText}
+			if isFromMe {
+				formatted = prependText(formatted, "You: ")
+			} else if strings.HasSuffix(e.Chat, "@g.us") {
+				author := e.Actor
+				if idx := strings.Index(author, "@"); idx != -1 {
+					author = author[:idx]
+				}
+				formatted = prependText(formatted, fmt.Sprintf("[%s]: ", author))
+			}
 		}
 		if formatted.ReplyTo != nil && formatted.ReplyTo.Platform != domain.Telegram {
 			resolved := c.resolveReplyTo(ctx, domain.Telegram, *formatted)
@@ -419,6 +537,9 @@ func (c *Coordinator) handleWhatsAppEvent(ctx context.Context, e domain.Event, t
 		opKey := fmt.Sprintf("wa:%d:%s", e.InboxID, e.Key)
 		if isFromMe {
 			opKey = fmt.Sprintf("wa:owner:%d:%s", e.InboxID, e.Key)
+		}
+		if strings.Contains(string(e.Metadata), "caption") || strings.Contains(e.Key, "caption") {
+			opKey = fmt.Sprintf("%s:caption", opKey)
 		}
 
 		delivery := domain.Delivery{

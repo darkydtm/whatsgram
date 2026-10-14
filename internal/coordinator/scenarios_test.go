@@ -857,3 +857,246 @@ func TestScenario11_FailAfterSendBeforeCommit(t *testing.T) {
 		t.Fatalf("expected isBridgeDispatched to recognize bridge sendID %s", firstSendID)
 	}
 }
+
+// Scenario 12: Splitting of long message or album, editing caption/primary part, and all-part deletion.
+func TestScenario12_MultipartSplittingEditingAndAllPartDeletion(t *testing.T) {
+	coord, st, tgPort, waPort, _ := setupTestEnvironment(t)
+	ctx := context.Background()
+	chat := setupActiveChat(t, coord, st, "15559876543@s.whatsapp.net", -10012345, 10)
+
+	// Step 1: Caption overflow splitting (WhatsApp -> Telegram)
+	// Caption > 1024 runes: should be split into primary (<= 1024) and caption_overflow part.
+	caption := strings.Repeat("A", 1000) + " " + strings.Repeat("B", 100)
+	waMsg := makeWhatsAppMessageEvent("wa-multipart-1", chat.WhatsAppJID, chat.WhatsAppJID, false, caption)
+	waMsg.Metadata = []byte(`{"source":"message","caption":true}`)
+	if _, err := st.Accept(ctx, waMsg); err != nil {
+		t.Fatalf("failed to accept waMsg: %v", err)
+	}
+	if err := coord.StepInbox(ctx); err != nil {
+		t.Fatalf("StepInbox create failed: %v", err)
+	}
+	if err := coord.StepDelivery(ctx); err != nil {
+		t.Fatalf("StepDelivery create failed: %v", err)
+	}
+
+	// Verify splitting occurred in Telegram port
+	if len(tgPort.sentRequests) != 2 {
+		t.Fatalf("expected 2 sent requests on Telegram for caption overflow, got %d", len(tgPort.sentRequests))
+	}
+	if len([]rune(tgPort.sentRequests[0].Content.Text)) > 1024 {
+		t.Fatalf("primary caption length %d > 1024", len([]rune(tgPort.sentRequests[0].Content.Text)))
+	}
+	if !strings.HasPrefix(tgPort.sentRequests[1].Content.Text, "BBBB") {
+		t.Fatalf("expected overflow text in second part, got: %s", tgPort.sentRequests[1].Content.Text)
+	}
+
+	// Verify parts stored in bridge_part
+	parts, err := st.FindParts(ctx, *waMsg.Target)
+	if err != nil {
+		t.Fatalf("FindParts failed: %v", err)
+	}
+	// Expected: 1 WA part + 2 TG parts
+	if len(parts) != 3 {
+		t.Fatalf("expected 3 parts in store, got %d: %+v", len(parts), parts)
+	}
+	var tgPrimaryPart, tgOverflowPart *domain.DeliveredPart
+	for i := range parts {
+		if parts[i].Ref.Platform == domain.Telegram {
+			if parts[i].Index == 0 && parts[i].Role == domain.RolePrimary {
+				tgPrimaryPart = &parts[i]
+			}
+			if parts[i].Index == 1 && parts[i].Role == domain.RoleCaptionOverflow {
+				tgOverflowPart = &parts[i]
+			}
+		}
+	}
+	if tgPrimaryPart == nil {
+		t.Fatalf("expected Telegram primary part with RolePrimary and Index 0")
+	}
+	if tgOverflowPart == nil {
+		t.Fatalf("expected Telegram caption overflow part with RoleCaptionOverflow and Index 1")
+	}
+
+	// Verify reply mapping: Telegram user replies to the caption overflow part (Index 1)
+	// Outgoing WhatsApp message must resolve its reply to the primary WA part (Index 0).
+	replyMsg := makeTelegramMessageEvent("tg-reply-overflow", -10012345, 42, 10, "replying to overflow")
+	replyMsg.Text.ReplyTo = &tgOverflowPart.Ref
+	if _, err := st.Accept(ctx, replyMsg); err != nil {
+		t.Fatalf("failed to accept replyMsg: %v", err)
+	}
+	if err := coord.StepInbox(ctx); err != nil {
+		t.Fatalf("StepInbox reply failed: %v", err)
+	}
+	if err := coord.StepDelivery(ctx); err != nil {
+		t.Fatalf("StepDelivery reply failed: %v", err)
+	}
+	if len(waPort.sentRequests) != 1 {
+		t.Fatalf("expected 1 sent request on WA, got %d", len(waPort.sentRequests))
+	}
+	if waPort.sentRequests[0].Content.ReplyTo == nil || waPort.sentRequests[0].Content.ReplyTo.ID != waMsg.Target.ID {
+		t.Fatalf("expected ReplyTo to target primary WhatsApp message ID %s, got: %+v", waMsg.Target.ID, waPort.sentRequests[0].Content.ReplyTo)
+	}
+
+	// Step 2: Editing caption updates caption part, editing text updates primary part
+	// 2a. Edit caption
+	editCaptionEvent := waMsg
+	editCaptionEvent.Key = "wa-multipart-1/edit-caption"
+	editCaptionEvent.Kind = domain.MessageEdit
+	editCaptionEvent.Version.Order = 200
+	editCaptionEvent.Version.Tie = "caption-edit-1"
+	editCaptionEvent.Metadata = []byte(`{"source":"message","caption":true}`)
+	editCaptionEvent.Text = &domain.TextContent{Text: "updated caption text"}
+	if _, err := st.Accept(ctx, editCaptionEvent); err != nil {
+		t.Fatalf("failed to accept caption edit: %v", err)
+	}
+	if err := coord.StepInbox(ctx); err != nil {
+		t.Fatalf("StepInbox edit caption failed: %v", err)
+	}
+	if err := coord.StepDelivery(ctx); err != nil {
+		t.Fatalf("StepDelivery edit caption failed: %v", err)
+	}
+	if len(tgPort.editedMessages) != 1 {
+		t.Fatalf("expected 1 TG edit call, got %d", len(tgPort.editedMessages))
+	}
+	if tgPort.editedMessages[0].Ref.ID != tgOverflowPart.Ref.ID {
+		t.Fatalf("expected caption edit to target overflow part %s, got %s", tgOverflowPart.Ref.ID, tgPort.editedMessages[0].Ref.ID)
+	}
+
+	// 2b. Edit primary part
+	editTextEvent := waMsg
+	editTextEvent.Key = "wa-multipart-1/edit-primary"
+	editTextEvent.Kind = domain.MessageEdit
+	editTextEvent.Version.Order = 300
+	editTextEvent.Version.Tie = "primary-edit-1"
+	editTextEvent.Metadata = []byte(`{"source":"message"}`)
+	editTextEvent.Text = &domain.TextContent{Text: "updated primary text"}
+	if _, err := st.Accept(ctx, editTextEvent); err != nil {
+		t.Fatalf("failed to accept text edit: %v", err)
+	}
+	if err := coord.StepInbox(ctx); err != nil {
+		t.Fatalf("StepInbox edit text failed: %v", err)
+	}
+	if err := coord.StepDelivery(ctx); err != nil {
+		t.Fatalf("StepDelivery edit text failed: %v", err)
+	}
+	if len(tgPort.editedMessages) != 2 {
+		t.Fatalf("expected 2 TG edit calls total, got %d", len(tgPort.editedMessages))
+	}
+	if tgPort.editedMessages[1].Ref.ID != tgPrimaryPart.Ref.ID {
+		t.Fatalf("expected primary text edit to target primary part %s, got %s", tgPrimaryPart.Ref.ID, tgPort.editedMessages[1].Ref.ID)
+	}
+
+	// Step 3: Deletion / revoke of all parts: verify that every part recorded in bridge_part is deleted on both platforms
+	revokeEvent := waMsg
+	revokeEvent.Key = "wa-multipart-1/revoke"
+	revokeEvent.Kind = domain.MessageRevoke
+	revokeEvent.Version.Order = 400
+	revokeEvent.Version.Tie = "revoke-1"
+	if _, err := st.Accept(ctx, revokeEvent); err != nil {
+		t.Fatalf("failed to accept revoke: %v", err)
+	}
+	if err := coord.StepInbox(ctx); err != nil {
+		t.Fatalf("StepInbox revoke failed: %v", err)
+	}
+	if err := coord.StepDelivery(ctx); err != nil {
+		t.Fatalf("StepDelivery revoke failed: %v", err)
+	}
+
+	// Verify all Telegram parts were deleted
+	if len(tgPort.deletedMessages) != 2 {
+		t.Fatalf("expected both Telegram parts to be deleted, got %d deletions: %+v", len(tgPort.deletedMessages), tgPort.deletedMessages)
+	}
+	deletedIDs := map[string]bool{
+		tgPort.deletedMessages[0].ID: true,
+		tgPort.deletedMessages[1].ID: true,
+	}
+	if !deletedIDs[tgPrimaryPart.Ref.ID] || !deletedIDs[tgOverflowPart.Ref.ID] {
+		t.Fatalf("expected deleted IDs to contain primary (%s) and overflow (%s), got %+v", tgPrimaryPart.Ref.ID, tgOverflowPart.Ref.ID, deletedIDs)
+	}
+
+	// Verify all parts recorded in bridge_part are marked deleted
+	allParts, err := st.FindParts(ctx, *waMsg.Target)
+	if err != nil {
+		t.Fatalf("FindParts after revoke failed: %v", err)
+	}
+	for _, p := range allParts {
+		if !p.Deleted {
+			t.Fatalf("expected part %+v to be marked deleted, but Deleted is false", p)
+		}
+	}
+
+	// Verify message tombstone in store
+	msgState, err := st.Message(ctx, *waMsg.Target)
+	if err != nil || !msgState.Tombstone {
+		t.Fatalf("expected message to be tombstoned in store, state: %+v, err: %v", msgState, err)
+	}
+}
+
+// Scenario 13: Unsupported media / operation graceful degradation without silent loss.
+func TestScenario13_UnsupportedGracefulDegradation(t *testing.T) {
+	coord, st, tgPort, waPort, _ := setupTestEnvironment(t)
+	ctx := context.Background()
+	chat := setupActiveChat(t, coord, st, "15559876543@s.whatsapp.net", -10012345, 10)
+
+	// Case A: WhatsApp sends an unsupported animated sticker
+	// Should degrade gracefully to a fallback notice message on Telegram without silent loss.
+	waSticker := makeWhatsAppMessageEvent("wa-sticker-anim-1", chat.WhatsAppJID, chat.WhatsAppJID, false, "")
+	waSticker.Kind = domain.MessageCreate
+	waSticker.Text = nil
+	waSticker.Metadata = []byte(`{"source":"message","reason":"animated-sticker"}`)
+	if _, err := st.Accept(ctx, waSticker); err != nil {
+		t.Fatalf("failed to accept waSticker: %v", err)
+	}
+	if err := coord.StepInbox(ctx); err != nil {
+		t.Fatalf("StepInbox sticker failed: %v", err)
+	}
+	if err := coord.StepDelivery(ctx); err != nil {
+		t.Fatalf("StepDelivery sticker failed: %v", err)
+	}
+
+	// Verify message delivered to Telegram topic (no silent loss)
+	if len(tgPort.sentRequests) != 1 {
+		t.Fatalf("expected 1 fallback notice request on Telegram, got %d", len(tgPort.sentRequests))
+	}
+	deliveredText := tgPort.sentRequests[0].Content.Text
+	if !strings.Contains(deliveredText, "Unsupported animated sticker") && !strings.Contains(deliveredText, "Unsupported media") {
+		t.Fatalf("expected fallback notice mentioning unsupported media/sticker, got: %s", deliveredText)
+	}
+
+	// Verify bridge_part recorded the delivery
+	partsWA, err := st.FindParts(ctx, *waSticker.Target)
+	if err != nil || len(partsWA) == 0 {
+		t.Fatalf("expected parts recorded in store for degraded media, err: %v, parts: %+v", err, partsWA)
+	}
+
+	// Case B: Telegram sends an unknown / unsupported media document to WhatsApp
+	// Should degrade gracefully to a fallback message on WhatsApp without silent loss.
+	tgDoc := makeTelegramMessageEvent("tg-unsupported-doc-1", -10012345, 42, 10, "")
+	tgDoc.Kind = domain.MessageCreate
+	tgDoc.Text = nil
+	tgDoc.Metadata = []byte(`{"reason":"unsupported_document"}`)
+	if _, err := st.Accept(ctx, tgDoc); err != nil {
+		t.Fatalf("failed to accept tgDoc: %v", err)
+	}
+	if err := coord.StepInbox(ctx); err != nil {
+		t.Fatalf("StepInbox tgDoc failed: %v", err)
+	}
+	if err := coord.StepDelivery(ctx); err != nil {
+		t.Fatalf("StepDelivery tgDoc failed: %v", err)
+	}
+
+	// Verify message delivered to WhatsApp (no silent loss)
+	if len(waPort.sentRequests) != 1 {
+		t.Fatalf("expected 1 fallback notice request on WhatsApp, got %d", len(waPort.sentRequests))
+	}
+	waDeliveredText := waPort.sentRequests[0].Content.Text
+	if !strings.Contains(waDeliveredText, "Unsupported media") {
+		t.Fatalf("expected fallback notice mentioning unsupported media, got: %s", waDeliveredText)
+	}
+
+	// Verify bridge_part recorded the delivery
+	partsTG, err := st.FindParts(ctx, *tgDoc.Target)
+	if err != nil || len(partsTG) == 0 {
+		t.Fatalf("expected parts recorded in store for degraded tg media, err: %v, parts: %+v", err, partsTG)
+	}
+}

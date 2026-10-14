@@ -32,6 +32,7 @@ type fakeTelegramPort struct {
 	mu              sync.Mutex
 	createdTopics   []domain.TopicRef
 	nextThreadID    int64
+	nextMsgID       int64
 	sentRequests    []domain.SendTextRequest
 	sendErr         error
 	editedMessages  []telegramEditCall
@@ -70,13 +71,14 @@ func (f *fakeTelegramPort) SendText(ctx context.Context, req domain.SendTextRequ
 	if f.sendErr != nil {
 		return domain.SendResult{}, f.sendErr
 	}
+	f.nextMsgID++
 	f.sentRequests = append(f.sentRequests, req)
 	part := domain.DeliveredPart{
 		Ref: domain.MessageRef{
 			Platform: domain.Telegram,
 			Chat:     strconv.FormatInt(req.TelegramTopic.ChatID, 10),
 			Author:   strconv.FormatInt(req.TelegramTopic.ChatID, 10),
-			ID:       strconv.FormatInt(time.Now().UnixNano(), 10),
+			ID:       fmt.Sprintf("tg-msg-%d", f.nextMsgID),
 		},
 		Index:           0,
 		Role:            domain.RolePrimary,

@@ -97,7 +97,7 @@ func (s *Store) CompleteDelivery(ctx context.Context, id int64, token string, c 
 		}
 	}
 	if d.Kind == "message.revoke" && d.Target != nil {
-		if _, err := tx.ExecContext(ctx, "UPDATE bridge_part SET deleted=1 WHERE message_id=? AND platform=? AND remote_chat=? AND remote_author=? AND remote_id=?", d.MessageID, d.Target.Platform, d.Target.Chat, d.Target.Author, d.Target.ID); err != nil {
+		if _, err := tx.ExecContext(ctx, "UPDATE bridge_part SET deleted=1 WHERE message_id=? AND platform=?", d.MessageID, d.Target.Platform); err != nil {
 			return safe(err)
 		}
 	}
