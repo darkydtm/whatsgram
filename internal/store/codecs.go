@@ -10,18 +10,18 @@ import (
 type storedText domain.TextContent
 
 type storedEvent struct {
-	InboxID    int64
-	Key        string
-	Source     domain.Platform
-	Kind       domain.EventKind
-	Chat       string
-	Target     *domain.MessageRef
-	Actor      string
-	OccurredAt time.Time
-	Version    domain.SourceVersion
-	Text       *storedText
-	Metadata   []byte
-	Raw        []byte
+	InboxID          int64
+	Key              string
+	Source           domain.Platform
+	Kind             domain.EventKind
+	Chat             string
+	Target           *domain.MessageRef
+	Actor            string
+	OccurredAt       time.Time
+	Version          domain.SourceVersion
+	Text             *storedText
+	Metadata         []byte
+	Raw              []byte
 	TelegramThreadID int64 `json:",omitempty"`
 }
 

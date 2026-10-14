@@ -102,18 +102,18 @@ func (k EventKind) Known() bool {
 }
 
 type Event struct {
-	InboxID    int64
-	Key        string
-	Source     Platform
-	Kind       EventKind
-	Chat       string
-	Target     *MessageRef
-	Actor      string
-	OccurredAt time.Time
-	Version    SourceVersion
-	Text       *TextContent
-	Metadata   []byte
-	Raw        []byte
+	InboxID          int64
+	Key              string
+	Source           Platform
+	Kind             EventKind
+	Chat             string
+	Target           *MessageRef
+	Actor            string
+	OccurredAt       time.Time
+	Version          SourceVersion
+	Text             *TextContent
+	Metadata         []byte
+	Raw              []byte
 	TelegramThreadID int64 `json:",omitempty"`
 }
 
