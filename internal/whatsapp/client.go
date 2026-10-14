@@ -1,0 +1,156 @@
+package whatsapp
+
+import (
+	"context"
+	"errors"
+	"io"
+	"log/slog"
+	"strings"
+	"sync"
+
+	"github.com/darkydtm/whatsgram/internal/domain"
+	"github.com/rs/zerolog"
+	"go.mau.fi/whatsmeow"
+	"go.mau.fi/whatsmeow/proto/waE2E"
+	"go.mau.fi/whatsmeow/store"
+	"go.mau.fi/whatsmeow/types"
+	waLog "go.mau.fi/whatsmeow/util/log"
+	"google.golang.org/protobuf/proto"
+)
+
+type Options struct {
+	Logger *slog.Logger
+}
+
+type networkClient interface {
+	IsConnected() bool
+	IsLoggedIn() bool
+	SendMessage(context.Context, types.JID, *waE2E.Message, ...whatsmeow.SendRequestExtra) (whatsmeow.SendResponse, error)
+}
+
+type Client struct {
+	client  *whatsmeow.Client
+	network networkClient
+	device  *store.Device
+	logger  *slog.Logger
+	mu      sync.Mutex
+}
+
+func New(ctx context.Context, device *store.Device, options Options) (*Client, error) {
+	if ctx == nil || device == nil || device.Container == nil || device.NoiseKey == nil || device.IdentityKey == nil || device.SignedPreKey == nil || device.Deleted {
+		return nil, adapterError(domain.Permanent, "invalid_target")
+	}
+	logger := options.Logger
+	if logger == nil {
+		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
+	device.Log = libraryLog{}
+	cli := whatsmeow.NewClient(device, libraryLog{})
+	cli.SynchronousAck = true
+	cli.EnableDecryptedEventBuffer = true
+	cli.EnableAutoReconnect = false
+	cli.InitialAutoReconnect = false
+	cli.DisableLoginAutoReconnect = true
+	cli.ManualHistorySyncDownload = true
+	cli.DisableManualHistorySyncReceipt = true
+	cli.BackgroundEventCtx = privateContext(ctx)
+	return &Client{client: cli, network: cli, device: device, logger: logger}, nil
+}
+
+type libraryLog struct{}
+
+func (libraryLog) Warnf(string, ...any)      {}
+func (libraryLog) Errorf(string, ...any)     {}
+func (libraryLog) Infof(string, ...any)      {}
+func (libraryLog) Debugf(string, ...any)     {}
+func (l libraryLog) Sub(string) waLog.Logger { return l }
+
+func privateContext(ctx context.Context) context.Context {
+	return zerolog.New(io.Discard).WithContext(ctx)
+}
+
+var errSafe = errors.New("whatsapp adapter failure")
+
+func adapterError(class domain.ErrorClass, code string) error {
+	return domain.AdapterError{Class: class, Code: code, MayHaveApplied: class == domain.Uncertain, Cause: errSafe}
+}
+
+func parseChat(value string) (types.JID, error) {
+	j, err := types.ParseJID(value)
+	if err != nil || j.User == "" || j.Device != 0 || j.RawAgent != 0 || j.String() != value || len(value) > 256 || strings.ContainsRune(value, 0) {
+		return types.EmptyJID, adapterError(domain.Permanent, "invalid_target")
+	}
+	switch j.Server {
+	case types.DefaultUserServer, types.HiddenUserServer, types.GroupServer:
+		return j, nil
+	default:
+		return types.EmptyJID, adapterError(domain.Permanent, "invalid_target")
+	}
+}
+
+func validID(id string) bool {
+	return id != "" && len(id) <= 256 && !strings.ContainsAny(id, "\x00\r\n")
+}
+
+func (c *Client) AllocateSendID() string { return c.client.GenerateMessageID() }
+
+func buildText(chat types.JID, content domain.TextContent) (*waE2E.Message, error) {
+	if content.Validate() != nil || content.Text == "" {
+		return nil, adapterError(domain.Permanent, "invalid_target")
+	}
+	if content.ReplyTo == nil {
+		return &waE2E.Message{Conversation: proto.String(content.Text)}, nil
+	}
+	r := content.ReplyTo
+	if r.Platform != domain.WhatsApp || r.Chat != chat.String() {
+		return nil, adapterError(domain.Permanent, "invalid_target")
+	}
+	if _, err := parseChat(r.Author); err != nil {
+		return nil, err
+	}
+	return &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{Text: proto.String(content.Text), ContextInfo: &waE2E.ContextInfo{
+		StanzaID: proto.String(r.ID), Participant: proto.String(r.Author), RemoteJID: proto.String(r.Chat),
+	}}}, nil
+}
+
+func (c *Client) SendText(ctx context.Context, request domain.SendTextRequest) (domain.SendResult, error) {
+	if request.OperationKey == "" || !validID(request.WhatsAppSendID) {
+		return domain.SendResult{}, adapterError(domain.Permanent, "invalid_target")
+	}
+	chat, err := parseChat(request.WhatsAppChat)
+	if err != nil {
+		return domain.SendResult{}, err
+	}
+	message, err := buildText(chat, request.Content)
+	if err != nil {
+		return domain.SendResult{}, err
+	}
+	resp, err := c.send(ctx, chat, message, request.WhatsAppSendID)
+	if err != nil {
+		return domain.SendResult{}, err
+	}
+	author := resp.Sender
+	if author.IsEmpty() {
+		author = c.device.GetJID()
+	}
+	ref := domain.MessageRef{Platform: domain.WhatsApp, Chat: chat.String(), Author: author.ToNonAD().String(), ID: request.WhatsAppSendID, Device: author.String()}
+	part := domain.DeliveredPart{Ref: ref, Role: domain.RolePrimary, BridgeOwned: true, Capabilities: domain.CanEditText | domain.CanRevoke | domain.CanReact}
+	if part.Validate() != nil || resp.ID != request.WhatsAppSendID {
+		return domain.SendResult{}, adapterError(domain.Uncertain, "uncertain")
+	}
+	return domain.SendResult{Parts: []domain.DeliveredPart{part}, AcceptedAt: resp.Timestamp}, nil
+}
+
+func (c *Client) send(ctx context.Context, chat types.JID, message *waE2E.Message, id string) (whatsmeow.SendResponse, error) {
+	if ctx.Err() != nil {
+		return whatsmeow.SendResponse{}, adapterError(domain.Transient, "not_connected")
+	}
+	if !c.network.IsConnected() || !c.network.IsLoggedIn() || c.device.GetJID().IsEmpty() {
+		return whatsmeow.SendResponse{}, adapterError(domain.Transient, "not_connected")
+	}
+	resp, err := c.network.SendMessage(privateContext(ctx), chat, message, whatsmeow.SendRequestExtra{ID: id})
+	if err != nil {
+		return resp, sendError(err)
+	}
+	return resp, nil
+}
