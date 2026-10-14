@@ -20,7 +20,7 @@ type ParsedCommand struct {
 }
 
 func (p Policy) parseCommand(in Input) Decision {
-	if len(in.Text) > 4096 || !utf8.ValidString(in.Text) || in.ReplyMessageID > 2147483647 || in.ThreadID > 2147483647 {
+	if len(in.Text) > 4096 || !utf8.ValidString(in.Text) || in.ReplyMessageID < 0 || in.ReplyMessageID > 2147483647 || in.ThreadID < 0 || in.ThreadID > 2147483647 {
 		return invalidCommand()
 	}
 	text := strings.TrimSpace(in.Text)
