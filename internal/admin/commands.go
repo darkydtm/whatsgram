@@ -33,7 +33,7 @@ func (p Policy) parseCommand(in Input) Decision {
 		return invalidCommand()
 	}
 	if name, username, addressed := strings.Cut(verb, "@"); addressed {
-		if username == "" {
+		if !validBotUsername(username) {
 			return invalidCommand()
 		}
 		if !strings.EqualFold(username, p.botUsername) {
