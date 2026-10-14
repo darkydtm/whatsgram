@@ -287,11 +287,15 @@ func (s *Store) applySource(ctx context.Context, tx *sql.Tx, e domain.Event, del
 		return 0, 0, false, ErrStorage
 	}
 	if e.Kind != domain.MessageRevoke {
-		order, err := e.Version.Compare(version)
-		if err != nil {
-			return 0, 0, false, err
-		}
-		if order <= 0 {
+		if e.Version.Kind == version.Kind {
+			order, err := e.Version.Compare(version)
+			if err != nil {
+				return 0, 0, false, err
+			}
+			if order <= 0 {
+				return messageID, chatID, true, nil
+			}
+		} else if e.Version.Order > 0 && version.Order > 0 && e.Version.Order <= version.Order {
 			return messageID, chatID, true, nil
 		}
 		var effective []byte
@@ -302,9 +306,13 @@ func (s *Store) applySource(ctx context.Context, tx *sql.Tx, e domain.Event, del
 		if err := json.Unmarshal(effective, &effectiveVersion); err != nil {
 			return 0, 0, false, ErrStorage
 		}
-		if order, err := e.Version.Compare(effectiveVersion); err != nil {
-			return 0, 0, false, err
-		} else if order <= 0 {
+		if e.Version.Kind == effectiveVersion.Kind {
+			if order, err := e.Version.Compare(effectiveVersion); err != nil {
+				return 0, 0, false, err
+			} else if order <= 0 {
+				return messageID, chatID, true, nil
+			}
+		} else if e.Version.Order > 0 && effectiveVersion.Order > 0 && e.Version.Order <= effectiveVersion.Order {
 			return messageID, chatID, true, nil
 		}
 	}
