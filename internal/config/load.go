@@ -38,6 +38,9 @@ func Load(path string, lookup func(string) (string, bool)) (Config, error) {
 			}
 			pending = append(pending, node.Content...)
 		}
+		if !validYAMLIntegers(document.Content[0]) {
+			return Config{}, errors.New("invalid configuration YAML integer")
+		}
 		decoder := yaml.NewDecoder(bytes.NewReader(data))
 		decoder.KnownFields(true)
 		if err := decoder.Decode(&c); err != nil {
