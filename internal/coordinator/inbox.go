@@ -450,11 +450,7 @@ func (c *Coordinator) isBridgeDispatched(ctx context.Context, e domain.Event, ta
 }
 
 func (c *Coordinator) completeInbox(ctx context.Context, e domain.Event, token string, now time.Time) error {
-	err := c.store.PlanEvent(ctx, e, token, nil, now)
-	if err == nil {
-		return nil
-	}
-	if cErr := c.store.CompleteInbox(ctx, e.InboxID, token, now); cErr == nil {
+	if err := c.store.CompleteInbox(ctx, e.InboxID, token, now); err == nil {
 		return nil
 	}
 	return c.store.QuarantineInbox(ctx, e.InboxID, token, now)
