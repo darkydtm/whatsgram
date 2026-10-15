@@ -32,4 +32,4 @@ WORKDIR /data
 COPY --from=builder /build/whatsgram /usr/local/bin/whatsgram
 
 ENTRYPOINT ["/usr/local/bin/whatsgram"]
-CMD ["-config", "/data/config.yaml"]
+CMD []

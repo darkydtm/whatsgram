@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"log/slog"
+	"os"
 	"strings"
 	"testing"
 )
@@ -68,5 +69,86 @@ func TestLoggerRedactsSecrets(t *testing.T) {
 	}
 	if !strings.Contains(out, "safe-value") {
 		t.Fatal("logger lost unredacted safe value")
+	}
+}
+
+func TestResolveEnvPath(t *testing.T) {
+	tests := []struct {
+		name       string
+		envFlag    string
+		configFlag string
+		envVars    map[string]string
+		statErr    error
+		expected   string
+	}{
+		{
+			name:     "env flag provided",
+			envFlag:  "custom.env",
+			expected: "custom.env",
+		},
+		{
+			name:       "config flag alias provided",
+			configFlag: "alias.env",
+			expected:   "alias.env",
+		},
+		{
+			name:       "env flag overrides config flag",
+			envFlag:    "primary.env",
+			configFlag: "secondary.env",
+			expected:   "primary.env",
+		},
+		{
+			name: "WHATSGRAM_ENV env var",
+			envVars: map[string]string{
+				"WHATSGRAM_ENV": "from_env.env",
+			},
+			expected: "from_env.env",
+		},
+		{
+			name: "WHATSGRAM_CONFIG env var alias",
+			envVars: map[string]string{
+				"WHATSGRAM_CONFIG": "from_config.env",
+			},
+			expected: "from_config.env",
+		},
+		{
+			name: "WHATSGRAM_ENV overrides WHATSGRAM_CONFIG",
+			envVars: map[string]string{
+				"WHATSGRAM_ENV":    "from_env.env",
+				"WHATSGRAM_CONFIG": "from_config.env",
+			},
+			expected: "from_env.env",
+		},
+		{
+			name:     "fallback to existing dot env file",
+			statErr:  nil,
+			expected: ".env",
+		},
+		{
+			name:     "fallback when dot env file not found",
+			statErr:  os.ErrNotExist,
+			expected: "",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			getenv := func(key string) string {
+				if tc.envVars == nil {
+					return ""
+				}
+				return tc.envVars[key]
+			}
+			stat := func(name string) (os.FileInfo, error) {
+				if name == ".env" {
+					return nil, tc.statErr
+				}
+				return nil, os.ErrNotExist
+			}
+			got := resolveEnvPath(tc.envFlag, tc.configFlag, getenv, stat)
+			if got != tc.expected {
+				t.Errorf("resolveEnvPath() = %q, expected %q", got, tc.expected)
+			}
+		})
 	}
 }

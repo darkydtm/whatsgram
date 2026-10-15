@@ -49,13 +49,38 @@ func setupLogger(level slog.Level) *slog.Logger {
 	return slog.New(handler)
 }
 
+func resolveEnvPath(envFlag, configFlag string, getenv func(string) string, stat func(string) (os.FileInfo, error)) string {
+	if envFlag != "" {
+		return envFlag
+	}
+	if configFlag != "" {
+		return configFlag
+	}
+	if getenv != nil {
+		if val := getenv("WHATSGRAM_ENV"); val != "" {
+			return val
+		}
+		if val := getenv("WHATSGRAM_CONFIG"); val != "" {
+			return val
+		}
+	}
+	if stat != nil {
+		if _, err := stat(".env"); err == nil {
+			return ".env"
+		}
+	}
+	return ""
+}
+
 func main() {
 	var (
+		envPath    string
 		configPath string
 		logLevel   string
 	)
 
-	flag.StringVar(&configPath, "config", "", "path to YAML configuration file")
+	flag.StringVar(&envPath, "env", "", "path to .env configuration file")
+	flag.StringVar(&configPath, "config", "", "path to .env configuration file (alias for -env)")
 	flag.StringVar(&logLevel, "log-level", "info", "log level (debug, info, warn, error)")
 	flag.Parse()
 
@@ -68,15 +93,9 @@ func main() {
 
 	logger.Info("starting whatsgram bridge")
 
-	if configPath == "" {
-		if envConfig := os.Getenv("WHATSGRAM_CONFIG"); envConfig != "" {
-			configPath = envConfig
-		} else if _, err := os.Stat("config.yaml"); err == nil {
-			configPath = "config.yaml"
-		}
-	}
+	resolvedPath := resolveEnvPath(envPath, configPath, os.Getenv, os.Stat)
 
-	cfg, err := config.Load(configPath, nil)
+	cfg, err := config.Load(resolvedPath, nil)
 	if err != nil {
 		logger.Error("failed to load configuration", "error", err)
 		os.Exit(1)
