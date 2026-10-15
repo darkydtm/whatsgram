@@ -1,9 +1,9 @@
+# Pull-only deployment. Run: docker compose pull && docker compose up -d
+# For local builds, run: docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
 services:
   whatsgram:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: whatsgram:latest
+    image: ${WHATSGRAM_IMAGE:-ghcr.io/darkydtm/whatsgram:latest}
+    pull_policy: always
     container_name: whatsgram
     restart: unless-stopped
     stop_grace_period: 30s
@@ -18,4 +18,3 @@ services:
       - TZ=UTC
     volumes:
       - ./data:/data
-      - ./config.yaml:/data/config.yaml:ro

@@ -1,0 +1,6 @@
+services:
+  whatsgram:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    pull_policy: never
