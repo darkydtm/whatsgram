@@ -9,6 +9,7 @@ import (
 	"github.com/darkydtm/whatsgram/internal/domain"
 	"go.mau.fi/whatsmeow/proto/waCommon"
 	"go.mau.fi/whatsmeow/proto/waE2E"
+	"go.mau.fi/whatsmeow/proto/waHistorySync"
 	"go.mau.fi/whatsmeow/proto/waWeb"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
@@ -86,5 +87,70 @@ func TestNormalizeHistoryEditRetainsEventIDBeforeParseRewrite(t *testing.T) {
 	}
 	if e.OccurredAt != time.UnixMilli(1234567) {
 		t.Fatal("edit order must use protocol timestamp")
+	}
+}
+
+func TestNormalizeHistorySyncChronologicalOrder(t *testing.T) {
+	c, err := New(context.Background(), deviceFixture(t, true), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	chat := types.NewJID("120000", types.GroupServer)
+	sender := types.NewJID("15550000002", types.DefaultUserServer)
+
+	// Create 3 messages with timestamps: 3000 (newest), 1000 (oldest), 2000 (middle)
+	makeWebMsg := func(id, text string, ts uint64) *waWeb.WebMessageInfo {
+		raw := &waE2E.Message{Conversation: proto.String(text)}
+		return &waWeb.WebMessageInfo{
+			Key: &waCommon.MessageKey{
+				RemoteJID:   proto.String(chat.String()),
+				FromMe:      proto.Bool(false),
+				ID:          proto.String(id),
+				Participant: proto.String(sender.String()),
+			},
+			Message:          raw,
+			MessageTimestamp: proto.Uint64(ts),
+		}
+	}
+
+	m3 := makeWebMsg("MSG-3", "third message (newest)", 3000)
+	m1 := makeWebMsg("MSG-1", "first message (oldest)", 1000)
+	m2 := makeWebMsg("MSG-2", "second message (middle)", 2000)
+
+	syncEvt := &events.HistorySync{
+		Data: &waHistorySync.HistorySync{
+			Conversations: []*waHistorySync.Conversation{
+				{
+					ID: proto.String(chat.String()),
+					Messages: []*waHistorySync.HistorySyncMsg{
+						{Message: m3, MsgOrderID: proto.Uint64(3)},
+						{Message: m1, MsgOrderID: proto.Uint64(1)},
+						{Message: m2, MsgOrderID: proto.Uint64(2)},
+					},
+				},
+			},
+		},
+	}
+
+	events, err := c.NormalizeEvent(context.Background(), syncEvt)
+	if err != nil {
+		t.Fatalf("NormalizeEvent failed: %v", err)
+	}
+
+	if len(events) != 3 {
+		t.Fatalf("expected 3 events, got %d", len(events))
+	}
+
+	// Verify chronological order: MSG-1 (1000) -> MSG-2 (2000) -> MSG-3 (3000)
+	expectedOrder := []string{"first message (oldest)", "second message (middle)", "third message (newest)"}
+	expectedTimestamps := []int64{1000 * 1000, 2000 * 1000, 3000 * 1000} // seconds to millis
+
+	for i, ev := range events {
+		if ev.Text.Text != expectedOrder[i] {
+			t.Errorf("at index %d: expected text %q, got %q", i, expectedOrder[i], ev.Text.Text)
+		}
+		if ev.OccurredAt.Unix() != int64(expectedTimestamps[i]/1000) {
+			t.Errorf("at index %d: expected timestamp %d, got %d", i, expectedTimestamps[i]/1000, ev.OccurredAt.Unix())
+		}
 	}
 }

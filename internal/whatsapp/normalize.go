@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"sort"
 	"time"
 
 	"github.com/darkydtm/whatsgram/internal/domain"
@@ -57,9 +58,73 @@ func (c *Client) NormalizeEvent(ctx context.Context, event any) ([]domain.Event,
 	switch e := event.(type) {
 	case *events.Message:
 		return c.normalizeMessage(ctx, e)
+	case *events.HistorySync:
+		return c.normalizeHistorySync(ctx, e)
 	default:
 		return nil, nil
 	}
+}
+
+func (c *Client) normalizeHistorySync(ctx context.Context, e *events.HistorySync) ([]domain.Event, error) {
+	if e == nil {
+		return nil, nil
+	}
+	data := e.Data
+	if data == nil && e.Notification != nil && c.network != nil {
+		var err error
+		data, err = c.network.DownloadHistorySync(ctx, e.Notification, false)
+		if err != nil || data == nil {
+			return nil, err
+		}
+	}
+	if data == nil {
+		return nil, nil
+	}
+
+	var allEvents []domain.Event
+	for _, conv := range data.GetConversations() {
+		if conv == nil {
+			continue
+		}
+		chatJID, err := types.ParseJID(conv.GetID())
+		if err != nil {
+			continue
+		}
+		messages := conv.GetMessages()
+		if len(messages) == 0 {
+			continue
+		}
+		// Sort messages chronologically: oldest first, newer last
+		sort.SliceStable(messages, func(i, j int) bool {
+			mi := messages[i].GetMessage()
+			mj := messages[j].GetMessage()
+			if mi == nil || mj == nil {
+				return mi != nil
+			}
+			ti := mi.GetMessageTimestamp()
+			tj := mj.GetMessageTimestamp()
+			if ti != tj {
+				return ti < tj
+			}
+			return messages[i].GetMsgOrderID() < messages[j].GetMsgOrderID()
+		})
+
+		for _, hMsg := range messages {
+			if hMsg == nil || hMsg.GetMessage() == nil || c.network == nil {
+				continue
+			}
+			parsedMsg, err := c.network.ParseWebMessage(chatJID, hMsg.GetMessage())
+			if err != nil || parsedMsg == nil {
+				continue
+			}
+			evs, err := c.normalizeMessage(ctx, parsedMsg)
+			if err != nil {
+				continue
+			}
+			allEvents = append(allEvents, evs...)
+		}
+	}
+	return allEvents, nil
 }
 
 func unwrapMessage(raw *waE2E.Message) (*waE2E.Message, bool) {

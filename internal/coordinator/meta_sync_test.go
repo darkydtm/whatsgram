@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/darkydtm/whatsgram/internal/domain"
 )
@@ -455,5 +456,83 @@ func TestTopicMetaCardWithAvatarPhotoAndFallback(t *testing.T) {
 	}
 	if !foundText {
 		t.Fatalf("expected text meta-card fallback for contact without avatar")
+	}
+}
+
+func TestHistorySyncMessageChronologicalDeliveryToTelegram(t *testing.T) {
+	coord, st, tgPort, waPort, _ := setupTestEnvironment(t)
+	ctx := context.Background()
+
+	chatJID := "120363555@g.us"
+	authorJID := "15559999999@s.whatsapp.net"
+	waPort.groups = map[string]domain.GroupMeta{
+		chatJID: {JID: chatJID, Name: "Sync Chat"},
+	}
+	topic, err := coord.EnsureTopic(ctx, chatJID, "Sync Chat")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 3 history messages with chronological timestamps
+	t1 := time.Unix(1000, 0)
+	t2 := time.Unix(2000, 0)
+	t3 := time.Unix(3000, 0)
+
+	ev1 := makeWhatsAppMessageEvent("hist-1", chatJID, authorJID, false, "first oldest message")
+	ev1.OccurredAt = t1
+	ev1.Version.Order = t1.UnixMilli()
+
+	ev2 := makeWhatsAppMessageEvent("hist-2", chatJID, authorJID, false, "second middle message")
+	ev2.OccurredAt = t2
+	ev2.Version.Order = t2.UnixMilli()
+
+	ev3 := makeWhatsAppMessageEvent("hist-3", chatJID, authorJID, false, "third newest message")
+	ev3.OccurredAt = t3
+	ev3.Version.Order = t3.UnixMilli()
+
+	// Ingest chronologically
+	if _, err := st.Accept(ctx, ev1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Accept(ctx, ev2); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Accept(ctx, ev3); err != nil {
+		t.Fatal(err)
+	}
+
+	// Step inbox for each
+	for i := 0; i < 3; i++ {
+		if err := coord.StepInbox(ctx); err != nil {
+			t.Fatalf("StepInbox %d failed: %v", i, err)
+		}
+	}
+	// Step delivery for each
+	for i := 0; i < 3; i++ {
+		if err := coord.StepDelivery(ctx); err != nil {
+			t.Fatalf("StepDelivery %d failed: %v", i, err)
+		}
+	}
+
+	// Check delivery order in tgPort
+	var sentMessages []string
+	for _, req := range tgPort.sentRequests {
+		if req.TelegramTopic.ThreadID == topic.ThreadID && !strings.Contains(req.Content.Text, "Справка") {
+			sentMessages = append(sentMessages, req.Content.Text)
+		}
+	}
+
+	if len(sentMessages) != 3 {
+		t.Fatalf("expected 3 delivered messages, got %d: %+v", len(sentMessages), sentMessages)
+	}
+
+	if !strings.HasPrefix(sentMessages[0], "first oldest message") {
+		t.Errorf("expected first sent message to be oldest, got: %s", sentMessages[0])
+	}
+	if !strings.HasPrefix(sentMessages[1], "second middle message") {
+		t.Errorf("expected second sent message to be middle, got: %s", sentMessages[1])
+	}
+	if !strings.HasPrefix(sentMessages[2], "third newest message") {
+		t.Errorf("expected third sent message to be newest, got: %s", sentMessages[2])
 	}
 }

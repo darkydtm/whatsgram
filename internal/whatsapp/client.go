@@ -14,8 +14,11 @@ import (
 	"github.com/rs/zerolog"
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
+	"go.mau.fi/whatsmeow/proto/waHistorySync"
+	"go.mau.fi/whatsmeow/proto/waWeb"
 	"go.mau.fi/whatsmeow/store"
 	"go.mau.fi/whatsmeow/types"
+	"go.mau.fi/whatsmeow/types/events"
 	waLog "go.mau.fi/whatsmeow/util/log"
 	"google.golang.org/protobuf/proto"
 )
@@ -41,6 +44,8 @@ type networkClient interface {
 	GetJoinedGroups(context.Context) ([]*types.GroupInfo, error)
 	GetGroupInfo(context.Context, types.JID) (*types.GroupInfo, error)
 	GetProfilePictureInfo(context.Context, types.JID, *whatsmeow.GetProfilePictureParams) (*types.ProfilePictureInfo, error)
+	DownloadHistorySync(context.Context, *waE2E.HistorySyncNotification, bool) (*waHistorySync.HistorySync, error)
+	ParseWebMessage(types.JID, *waWeb.WebMessageInfo) (*events.Message, error)
 }
 
 type Client struct {
