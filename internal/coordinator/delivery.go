@@ -2,6 +2,7 @@ package coordinator
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -117,6 +118,22 @@ func (c *Coordinator) sendTelegram(ctx context.Context, delivery domain.Delivery
 		content := domain.TextContent{}
 		if delivery.Text != nil {
 			content = c.resolveReplyTo(ctx, domain.Telegram, *delivery.Text)
+		}
+
+		isPhoto := strings.Contains(delivery.OperationKey, ":photo")
+		if isPhoto && len(delivery.RawPayload) > 0 {
+			photoData, err := c.waPort.DownloadMedia(ctx, delivery.RawPayload)
+			if err == nil && len(photoData) > 0 {
+				req := domain.SendPhotoRequest{
+					OperationKey:  delivery.OperationKey,
+					TelegramTopic: topic,
+					Caption:       content.Text,
+					Entities:      content.Entities,
+					FileName:      "photo.jpg",
+					Data:          photoData,
+				}
+				return c.tgPort.SendPhoto(ctx, req)
+			}
 		}
 
 		isCaption := strings.Contains(delivery.OperationKey, "caption")
@@ -352,6 +369,31 @@ func (c *Coordinator) sendWhatsApp(ctx context.Context, delivery domain.Delivery
 		content := domain.TextContent{}
 		if delivery.Text != nil {
 			content = c.resolveReplyTo(ctx, domain.WhatsApp, *delivery.Text)
+		}
+
+		isPhoto := strings.Contains(delivery.OperationKey, ":photo")
+		if isPhoto && len(delivery.RawPayload) > 0 {
+			var meta struct {
+				FileID string `json:"file_id"`
+			}
+			if json.Unmarshal(delivery.RawPayload, &meta) == nil && meta.FileID != "" {
+				fileBytes, err := c.tgPort.DownloadFile(ctx, meta.FileID)
+				if err == nil && len(fileBytes) > 0 {
+					sendID := delivery.WhatsAppSendID
+					if sendID == "" {
+						sendID = c.waPort.AllocateSendID()
+					}
+					c.recordBridgeSend(sendID)
+					req := domain.SendPhotoRequest{
+						OperationKey:   delivery.OperationKey,
+						WhatsAppChat:   delivery.EchoActor,
+						WhatsAppSendID: sendID,
+						Caption:        content.Text,
+						Data:           fileBytes,
+					}
+					return c.waPort.SendPhoto(ctx, req)
+				}
+			}
 		}
 
 		runes := []rune(content.Text)

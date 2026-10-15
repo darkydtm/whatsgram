@@ -233,12 +233,14 @@ type SendTextRequest struct {
 	Content        TextContent
 }
 type SendPhotoRequest struct {
-	OperationKey  string
-	TelegramTopic TopicRef
-	Caption       string
-	Entities      []TextEntity
-	FileName      string
-	Data          []byte
+	OperationKey   string
+	TelegramTopic  TopicRef
+	WhatsAppChat   string
+	WhatsAppSendID string
+	Caption        string
+	Entities       []TextEntity
+	FileName       string
+	Data           []byte
 }
 
 const (
@@ -297,12 +299,14 @@ type TelegramPort interface {
 	EditText(context.Context, MessageRef, TextContent) error
 	Delete(context.Context, MessageRef) error
 	SetOwnReaction(context.Context, MessageRef, string) error
+	DownloadFile(context.Context, string) ([]byte, error)
 }
 type WhatsAppPort interface {
 	Run(context.Context, EventSink) error
 	DiscoverChats(context.Context) ([]ChatCandidate, error)
 	AllocateSendID() string
 	SendText(context.Context, SendTextRequest) (SendResult, error)
+	SendPhoto(context.Context, SendPhotoRequest) (SendResult, error)
 	EditOwnText(context.Context, MessageRef, TextContent, string) error
 	Revoke(context.Context, MessageRef, string) error
 	SetOwnReaction(context.Context, MessageRef, string, string) error
@@ -310,6 +314,7 @@ type WhatsAppPort interface {
 	GetGroupMeta(context.Context, string) (GroupMeta, error)
 	GetCommonGroups(context.Context, string) ([]GroupMeta, error)
 	GetAvatar(context.Context, string) ([]byte, error)
+	DownloadMedia(context.Context, []byte) ([]byte, error)
 }
 type PairingNotice struct {
 	Kind      string
@@ -373,6 +378,7 @@ type Delivery struct {
 	Text            *TextContent
 	WhatsAppSendID  string
 	EchoActor       string
+	RawPayload      []byte `json:",omitempty"`
 	LeaseToken      string
 	LeaseUntil      time.Time
 	SendStartedAt   *time.Time

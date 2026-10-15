@@ -231,6 +231,36 @@ func (c *Client) SendPhoto(ctx context.Context, request domain.SendPhotoRequest)
 	return domain.SendResult{Parts: []domain.DeliveredPart{part}, AcceptedAt: time.Now().UTC()}, nil
 }
 
+func (c *Client) DownloadFile(ctx context.Context, fileID string) ([]byte, error) {
+	if ctx == nil || fileID == "" {
+		return nil, adapterError(domain.Permanent, "invalid_target")
+	}
+	if err := c.Initialize(ctx); err != nil {
+		return nil, err
+	}
+	file, err := c.api.GetFile(ctx, &bot.GetFileParams{FileID: fileID})
+	if err != nil {
+		return nil, classify(ctx, err, false)
+	}
+	if file == nil || file.FilePath == "" {
+		return nil, adapterError(domain.Permanent, "invalid_target")
+	}
+	fileURL := c.cfg.Endpoint + "/file/bot" + c.cfg.Token.Reveal() + "/" + file.FilePath
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fileURL, nil)
+	if err != nil {
+		return nil, classify(ctx, err, false)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, classify(ctx, err, false)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, adapterError(domain.Transient, "download_failed")
+	}
+	return io.ReadAll(resp.Body)
+}
+
 func (c *Client) target(ref domain.MessageRef) (int64, int, error) {
 	chat, e1 := strconv.ParseInt(ref.Chat, 10, 64)
 	message, e2 := strconv.Atoi(ref.ID)

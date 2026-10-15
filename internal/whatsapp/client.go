@@ -2,6 +2,7 @@ package whatsapp
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -46,6 +47,8 @@ type networkClient interface {
 	GetProfilePictureInfo(context.Context, types.JID, *whatsmeow.GetProfilePictureParams) (*types.ProfilePictureInfo, error)
 	DownloadHistorySync(context.Context, *waE2E.HistorySyncNotification, bool) (*waHistorySync.HistorySync, error)
 	ParseWebMessage(types.JID, *waWeb.WebMessageInfo) (*events.Message, error)
+	Download(context.Context, whatsmeow.DownloadableMessage) ([]byte, error)
+	Upload(context.Context, []byte, whatsmeow.MediaType) (whatsmeow.UploadResponse, error)
 }
 
 type Client struct {
@@ -75,8 +78,6 @@ func New(ctx context.Context, device *store.Device, options Options) (*Client, e
 	cli.EnableAutoReconnect = false
 	cli.InitialAutoReconnect = false
 	cli.DisableLoginAutoReconnect = true
-	cli.ManualHistorySyncDownload = true
-	cli.DisableManualHistorySyncReceipt = true
 	cli.BackgroundEventCtx = privateContext(ctx)
 	if options.Now == nil {
 		options.Now = time.Now
@@ -481,6 +482,71 @@ func (c *Client) SendText(ctx context.Context, request domain.SendTextRequest) (
 		return domain.SendResult{}, adapterError(domain.Uncertain, "uncertain")
 	}
 	return domain.SendResult{Parts: []domain.DeliveredPart{part}, AcceptedAt: resp.Timestamp}, nil
+}
+
+func (c *Client) DownloadMedia(ctx context.Context, rawEnvelopeBytes []byte) ([]byte, error) {
+	if ctx == nil || len(rawEnvelopeBytes) == 0 {
+		return nil, adapterError(domain.Permanent, "invalid_target")
+	}
+	var env rawEnvelope
+	if err := json.Unmarshal(rawEnvelopeBytes, &env); err != nil {
+		return nil, adapterError(domain.Permanent, "invalid_target")
+	}
+	if len(env.Payload) == 0 {
+		return nil, adapterError(domain.Permanent, "invalid_target")
+	}
+	var raw waE2E.Message
+	if err := proto.Unmarshal(env.Payload, &raw); err != nil {
+		return nil, adapterError(domain.Permanent, "invalid_target")
+	}
+	body, _ := unwrapMessage(&raw)
+	if body == nil {
+		return nil, adapterError(domain.Permanent, "invalid_target")
+	}
+	if img := body.GetImageMessage(); img != nil && c.network != nil {
+		return c.network.Download(ctx, img)
+	}
+	return nil, adapterError(domain.Permanent, "invalid_target")
+}
+
+func (c *Client) SendPhoto(ctx context.Context, request domain.SendPhotoRequest) (domain.SendResult, error) {
+	if request.OperationKey == "" || !validID(request.WhatsAppSendID) || len(request.Data) == 0 {
+		return domain.SendResult{}, adapterError(domain.Permanent, "invalid_target")
+	}
+	chat, err := parseChat(request.WhatsAppChat)
+	if err != nil {
+		return domain.SendResult{}, err
+	}
+	resp, err := c.network.Upload(ctx, request.Data, whatsmeow.MediaImage)
+	if err != nil {
+		return domain.SendResult{}, adapterError(domain.Transient, "not_connected")
+	}
+	fileLen := uint64(len(request.Data))
+	imageMsg := &waE2E.ImageMessage{
+		Caption:       proto.String(request.Caption),
+		Mimetype:      proto.String("image/jpeg"),
+		URL:           proto.String(resp.URL),
+		DirectPath:    proto.String(resp.DirectPath),
+		MediaKey:      resp.MediaKey,
+		FileEncSHA256: resp.FileEncSHA256,
+		FileSHA256:    resp.FileSHA256,
+		FileLength:    proto.Uint64(fileLen),
+	}
+	msg := &waE2E.Message{ImageMessage: imageMsg}
+	sendResp, err := c.send(ctx, chat, msg, request.WhatsAppSendID)
+	if err != nil {
+		return domain.SendResult{}, err
+	}
+	author := sendResp.Sender
+	if author.IsEmpty() {
+		author = c.device.GetJID()
+	}
+	ref := domain.MessageRef{Platform: domain.WhatsApp, Chat: chat.String(), Author: author.ToNonAD().String(), ID: request.WhatsAppSendID, Device: author.String()}
+	part := domain.DeliveredPart{Ref: ref, Role: domain.RolePrimary, BridgeOwned: true, Capabilities: domain.CanEditText | domain.CanRevoke | domain.CanReact}
+	if part.Validate() != nil || sendResp.ID != request.WhatsAppSendID {
+		return domain.SendResult{}, adapterError(domain.Uncertain, "uncertain")
+	}
+	return domain.SendResult{Parts: []domain.DeliveredPart{part}, AcceptedAt: sendResp.Timestamp}, nil
 }
 
 func (c *Client) send(ctx context.Context, chat types.JID, message *waE2E.Message, id string) (whatsmeow.SendResponse, error) {

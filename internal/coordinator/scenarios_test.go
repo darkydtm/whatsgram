@@ -1145,3 +1145,66 @@ func TestTelegramNormalizedTopicMessageDeliveredToWhatsApp(t *testing.T) {
 		t.Errorf("expected text 'hello from telegram topic', got %q", waPort.sentRequests[0].Content.Text)
 	}
 }
+
+func TestBidirectionalPhotoSynchronization(t *testing.T) {
+	coord, st, tgPort, waPort, _ := setupTestEnvironment(t)
+	ctx := context.Background()
+
+	chatJID := "120363888@g.us"
+	waPort.groups = map[string]domain.GroupMeta{
+		chatJID: {JID: chatJID, Name: "Photo Group"},
+	}
+	topic, err := coord.EnsureTopic(ctx, chatJID, "Photo Group")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. WhatsApp -> Telegram Photo
+	waPhotoEv := makeWhatsAppMessageEvent("wa-photo-1", chatJID, "15550000002@s.whatsapp.net", false, "Photo from WhatsApp")
+	waPhotoEv.Metadata = []byte(`{"source":"photo"}`)
+	waPhotoEv.Raw = []byte(`raw-photo-envelope`)
+	if _, err := st.Accept(ctx, waPhotoEv); err != nil {
+		t.Fatalf("Accept WA photo failed: %v", err)
+	}
+	if err := coord.StepInbox(ctx); err != nil {
+		t.Fatalf("StepInbox WA photo failed: %v", err)
+	}
+	if err := coord.StepDelivery(ctx); err != nil {
+		t.Fatalf("StepDelivery WA photo failed: %v", err)
+	}
+
+	lastTGPhoto := tgPort.LastSentPhoto()
+	if lastTGPhoto.TelegramTopic.ThreadID != topic.ThreadID {
+		t.Fatalf("expected photo delivered to TG topic %d, got %d", topic.ThreadID, lastTGPhoto.TelegramTopic.ThreadID)
+	}
+	if !strings.Contains(lastTGPhoto.Caption, "Photo from WhatsApp") {
+		t.Fatalf("expected caption to contain 'Photo from WhatsApp', got %s", lastTGPhoto.Caption)
+	}
+	if string(lastTGPhoto.Data) != "fake-downloaded-media" {
+		t.Fatalf("expected photo data 'fake-downloaded-media', got %s", string(lastTGPhoto.Data))
+	}
+
+	// 2. Telegram -> WhatsApp Photo
+	rawTGPhoto := fmt.Sprintf(`{"update_id":902,"message":{"message_id":444,"message_thread_id":%d,"date":1700000100,"from":{"id":42},"chat":{"id":%d},"caption":"Photo from TG","photo":[{"file_id":"file-small","file_unique_id":"u1","width":100,"height":100},{"file_id":"file-large","file_unique_id":"u2","width":800,"height":800}]}}`, topic.ThreadID, coord.cfg.Telegram.ChatID)
+	tgPhotoEv, err := telegram.Normalize(coord.cfg.Telegram, json.RawMessage(rawTGPhoto), "epoch1")
+	if err != nil {
+		t.Fatalf("Normalize TG photo failed: %v", err)
+	}
+	if _, err := st.Accept(ctx, tgPhotoEv); err != nil {
+		t.Fatalf("Accept TG photo failed: %v", err)
+	}
+	if err := coord.StepInbox(ctx); err != nil {
+		t.Fatalf("StepInbox TG photo failed: %v", err)
+	}
+	if err := coord.StepDelivery(ctx); err != nil {
+		t.Fatalf("StepDelivery TG photo failed: %v", err)
+	}
+
+	lastWAReq := waPort.LastSentRequest()
+	if lastWAReq.WhatsAppChat != chatJID {
+		t.Fatalf("expected WA chat %s, got %s", chatJID, lastWAReq.WhatsAppChat)
+	}
+	if lastWAReq.Content.Text != "Photo from TG" {
+		t.Fatalf("expected caption 'Photo from TG', got %s", lastWAReq.Content.Text)
+	}
+}

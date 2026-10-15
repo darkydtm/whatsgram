@@ -48,7 +48,7 @@ func TestNormalizeRevokeUnknownEncryptedAndViewOnceHaveLinkedFallback(t *testing
 		target string
 	}{
 		{"revoke", &waE2E.Message{ProtocolMessage: &waE2E.ProtocolMessage{Type: waE2E.ProtocolMessage_REVOKE.Enum(), Key: &waCommon.MessageKey{ID: proto.String("TARGET"), Participant: proto.String("15550000002@s.whatsapp.net")}, TimestampMS: proto.Int64(2000000)}}, domain.MessageRevoke, "TARGET"},
-		{"unknown", &waE2E.Message{ImageMessage: &waE2E.ImageMessage{Caption: proto.String("CANARY-media")}}, "unsupported", "EVENT"},
+		{"unknown", &waE2E.Message{AudioMessage: &waE2E.AudioMessage{}}, "unsupported", "EVENT"},
 		{"encrypted", &waE2E.Message{EncReactionMessage: &waE2E.EncReactionMessage{TargetMessageKey: &waCommon.MessageKey{ID: proto.String("TARGET"), Participant: proto.String("15550000002@s.whatsapp.net")}}}, "unsupported", "TARGET"},
 		{"view-once", &waE2E.Message{ViewOnceMessage: &waE2E.FutureProofMessage{Message: &waE2E.Message{Conversation: proto.String("CANARY-view-once")}}}, "unsupported", "EVENT"},
 	}

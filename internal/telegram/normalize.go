@@ -22,6 +22,7 @@ type Metadata struct {
 	ThreadID      int64           `json:"thread_id,omitempty"`
 	MessageID     int             `json:"message_id,omitempty"`
 	PollID        string          `json:"poll_id,omitempty"`
+	FileID        string          `json:"file_id,omitempty"`
 	ForwardOrigin json.RawMessage `json:"forward_origin,omitempty"`
 	Reply         json.RawMessage `json:"reply,omitempty"`
 	Entities      json.RawMessage `json:"entities,omitempty"`
@@ -95,6 +96,25 @@ func Normalize(cfg config.Telegram, raw json.RawMessage, epoch string) (domain.E
 						content.ReplyTo = &domain.MessageRef{Platform: domain.Telegram, Chat: e.Chat, Author: strconv.FormatInt(reply.From.ID, 10), ID: strconv.Itoa(reply.ID)}
 					}
 					e.Text = &content
+				} else if len(message.Photo) > 0 {
+					e.Kind = domain.MessageCreate
+					if field == "edited_message" {
+						e.Kind = domain.MessageEdit
+					}
+					content := domain.TextContent{Text: message.Caption}
+					for _, entity := range message.CaptionEntities {
+						mention := ""
+						if entity.User != nil {
+							mention = strconv.FormatInt(entity.User.ID, 10)
+						}
+						content.Entities = append(content.Entities, domain.TextEntity{Kind: string(entity.Type), StartUTF16: entity.Offset, LengthUTF16: entity.Length, URL: entity.URL, Mention: mention})
+					}
+					if reply := message.ReplyToMessage; reply != nil && reply.From != nil && reply.From.ID > 0 && reply.ID > 0 && reply.Chat.ID == message.Chat.ID && reply.SenderChat == nil {
+						content.ReplyTo = &domain.MessageRef{Platform: domain.Telegram, Chat: e.Chat, Author: strconv.FormatInt(reply.From.ID, 10), ID: strconv.Itoa(reply.ID)}
+					}
+					e.Text = &content
+					meta.UpdateType = "photo"
+					meta.FileID = message.Photo[len(message.Photo)-1].FileID
 				}
 			}
 		}

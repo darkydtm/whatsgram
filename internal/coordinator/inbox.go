@@ -338,6 +338,9 @@ func (c *Coordinator) handleTelegramEvent(ctx context.Context, e domain.Event, t
 	if strings.Contains(string(e.Metadata), "caption") || strings.Contains(e.Key, "caption") {
 		opKey = fmt.Sprintf("%s:caption", opKey)
 	}
+	if strings.Contains(string(e.Metadata), "photo") {
+		opKey = fmt.Sprintf("%s:photo", opKey)
+	}
 
 	delivery := domain.Delivery{
 		OperationKey:    opKey,
@@ -349,6 +352,7 @@ func (c *Coordinator) handleTelegramEvent(ctx context.Context, e domain.Event, t
 		Text:            textContent,
 		WhatsAppSendID:  sendID,
 		EchoActor:       chat.WhatsAppJID,
+		RawPayload:      e.Metadata,
 	}
 
 	var timers []store.TimerSpec
@@ -591,6 +595,9 @@ func (c *Coordinator) handleWhatsAppEvent(ctx context.Context, e domain.Event, t
 		if strings.Contains(string(e.Metadata), "caption") || strings.Contains(e.Key, "caption") {
 			opKey = fmt.Sprintf("%s:caption", opKey)
 		}
+		if strings.Contains(string(e.Metadata), "photo") {
+			opKey = fmt.Sprintf("%s:photo", opKey)
+		}
 
 		delivery := domain.Delivery{
 			OperationKey:    opKey,
@@ -601,6 +608,7 @@ func (c *Coordinator) handleWhatsAppEvent(ctx context.Context, e domain.Event, t
 			ExpectedVersion: e.Version,
 			Text:            formatted,
 			EchoActor:       chat.WhatsAppJID,
+			RawPayload:      e.Raw,
 		}
 
 		var timers []store.TimerSpec

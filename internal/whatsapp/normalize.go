@@ -253,6 +253,11 @@ func (c *Client) normalizeMessage(ctx context.Context, message *events.Message) 
 		}
 		e.Kind, e.Target, metadata.Reason = "unsupported", target, "encrypted-reaction"
 		metadata.TargetID = reaction.GetTargetMessageKey().GetID()
+	} else if img := body.GetImageMessage(); img != nil {
+		e.Kind = domain.MessageCreate
+		metadata.Source = "photo"
+		caption := img.GetCaption()
+		e.Text = &domain.TextContent{Text: caption}
 	} else {
 		e.Text = textContent(body)
 		if e.Text == nil {

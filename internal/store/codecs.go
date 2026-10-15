@@ -39,6 +39,7 @@ type storedDelivery struct {
 	Text            *storedText
 	WhatsAppSendID  string
 	EchoActor       string
+	RawPayload      []byte `json:",omitempty"`
 	LeaseToken      string
 	LeaseUntil      time.Time
 	SendStartedAt   *time.Time
@@ -53,5 +54,5 @@ func marshalText(text *domain.TextContent) ([]byte, error) {
 }
 
 func marshalDelivery(d domain.Delivery) ([]byte, error) {
-	return json.Marshal(storedDelivery{d.ID, d.OperationKey, d.Platform, d.Kind, d.ChatID, d.TopicGeneration, d.MessageID, d.DependsOnID, d.Target, d.ExpectedVersion, (*storedText)(d.Text), d.WhatsAppSendID, d.EchoActor, d.LeaseToken, d.LeaseUntil, d.SendStartedAt})
+	return json.Marshal(storedDelivery{d.ID, d.OperationKey, d.Platform, d.Kind, d.ChatID, d.TopicGeneration, d.MessageID, d.DependsOnID, d.Target, d.ExpectedVersion, (*storedText)(d.Text), d.WhatsAppSendID, d.EchoActor, d.RawPayload, d.LeaseToken, d.LeaseUntil, d.SendStartedAt})
 }

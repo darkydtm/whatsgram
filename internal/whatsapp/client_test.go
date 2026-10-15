@@ -88,6 +88,12 @@ func (f *fakeNetwork) SendMessage(_ context.Context, to types.JID, m *waE2E.Mess
 	f.to, f.message, f.extra = to, m, extra[0]
 	return f.response, f.err
 }
+func (f *fakeNetwork) Download(_ context.Context, _ whatsmeow.DownloadableMessage) ([]byte, error) {
+	return []byte("fake-downloaded-image"), nil
+}
+func (f *fakeNetwork) Upload(_ context.Context, _ []byte, _ whatsmeow.MediaType) (whatsmeow.UploadResponse, error) {
+	return whatsmeow.UploadResponse{URL: "https://example.com/fake", DirectPath: "/fake", MediaKey: []byte("fake-key"), FileEncSHA256: []byte("enc"), FileSHA256: []byte("sha"), FileLength: 100}, nil
+}
 
 func TestSendTextUsesPersistedIDAndRealReplyProto(t *testing.T) {
 	d := deviceFixture(t, true)

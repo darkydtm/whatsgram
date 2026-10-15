@@ -168,6 +168,10 @@ func (f *fakeTelegramPort) SendPhoto(ctx context.Context, req domain.SendPhotoRe
 	}, nil
 }
 
+func (f *fakeTelegramPort) DownloadFile(ctx context.Context, fileID string) ([]byte, error) {
+	return []byte("fake-file-bytes"), nil
+}
+
 func (f *fakeTelegramPort) LastSentPhoto() domain.SendPhotoRequest {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -335,6 +339,32 @@ func (f *fakeWhatsAppPort) GetAvatar(ctx context.Context, jid string) ([]byte, e
 		}
 	}
 	return nil, nil
+}
+
+func (f *fakeWhatsAppPort) DownloadMedia(ctx context.Context, payload []byte) ([]byte, error) {
+	return []byte("fake-downloaded-media"), nil
+}
+
+func (f *fakeWhatsAppPort) SendPhoto(ctx context.Context, req domain.SendPhotoRequest) (domain.SendResult, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.sentRequests = append(f.sentRequests, domain.SendTextRequest{
+		OperationKey:   req.OperationKey,
+		WhatsAppChat:   req.WhatsAppChat,
+		WhatsAppSendID: req.WhatsAppSendID,
+		Content:        domain.TextContent{Text: req.Caption},
+	})
+	part := domain.DeliveredPart{
+		Ref: domain.MessageRef{
+			Platform: domain.WhatsApp,
+			Chat:     req.WhatsAppChat,
+			Author:   req.WhatsAppChat,
+			ID:       req.WhatsAppSendID,
+		},
+		Role:        domain.RolePrimary,
+		BridgeOwned: true,
+	}
+	return domain.SendResult{Parts: []domain.DeliveredPart{part}, AcceptedAt: time.Now()}, nil
 }
 
 type fakePairingPort struct {
