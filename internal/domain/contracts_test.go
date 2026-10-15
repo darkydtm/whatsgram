@@ -120,3 +120,19 @@ func TestPartValidatesOwnershipRoleAndCapabilities(t *testing.T) {
 		t.Fatal("unknown role admitted")
 	}
 }
+
+func TestTopicRefURL(t *testing.T) {
+	cases := []struct {
+		topic TopicRef
+		want  string
+	}{
+		{TopicRef{ChatID: -1001234567890, ThreadID: 42}, "https://t.me/c/1234567890/42"},
+		{TopicRef{ChatID: 1234567890, ThreadID: 5}, "https://t.me/c/1234567890/5"},
+		{TopicRef{ChatID: -1234567890, ThreadID: 10}, "https://t.me/c/1234567890/10"},
+	}
+	for _, tc := range cases {
+		if got := tc.topic.URL(); got != tc.want {
+			t.Fatalf("expected %s, got %s", tc.want, got)
+		}
+	}
+}

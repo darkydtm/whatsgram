@@ -233,4 +233,61 @@ func TestMappedLifecycleAndForumsUseActualWireMethods(t *testing.T) {
 	}
 }
 
+func TestSendTextTransfersEntities(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if initialization(w, r) {
+			return
+		}
+		if r.URL.Path != "/bot"+testToken+"/sendMessage" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		if err := r.ParseMultipartForm(1 << 20); err != nil {
+			t.Error(err)
+		}
+		entitiesRaw := r.FormValue("entities")
+		if entitiesRaw == "" {
+			t.Fatalf("expected entities in form value")
+		}
+		var entities []struct {
+			Type   string `json:"type"`
+			Offset int    `json:"offset"`
+			Length int    `json:"length"`
+			URL    string `json:"url"`
+		}
+		if err := json.Unmarshal([]byte(entitiesRaw), &entities); err != nil {
+			t.Fatalf("failed to unmarshal entities: %v", err)
+		}
+		if len(entities) != 1 || entities[0].Type != "text_link" || entities[0].URL != "https://example.com" {
+			t.Fatalf("unexpected entities: %+v", entities)
+		}
+		writeOK(w, `{"message_id":34,"message_thread_id":7,"date":10,"chat":{"id":-10042,"type":"supergroup"},"from":{"id":901,"is_bot":true},"text":"link"}`)
+	}))
+	defer srv.Close()
+
+	c, err := New(testConfig(srv.URL), srv.Client(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Initialize(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	req := domain.SendTextRequest{
+		TelegramTopic: domain.TopicRef{ChatID: -10042, ThreadID: 7, Generation: 1},
+		Content: domain.TextContent{
+			Text: "link",
+			Entities: []domain.TextEntity{
+				{Kind: "text_link", StartUTF16: 0, LengthUTF16: 4, URL: "https://example.com"},
+			},
+		},
+	}
+	res, err := c.SendText(context.Background(), req)
+	if err != nil {
+		t.Fatalf("SendText failed: %v", err)
+	}
+	if len(res.Parts) != 1 || res.Parts[0].Ref.ID != "34" {
+		t.Fatalf("unexpected send result: %+v", res)
+	}
+}
+
 var _ io.Reader

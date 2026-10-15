@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf16"
@@ -191,6 +192,14 @@ type TopicRef struct {
 	ThreadID   int64
 	Generation int64
 }
+
+func (t TopicRef) URL() string {
+	s := strconv.FormatInt(t.ChatID, 10)
+	s = strings.TrimPrefix(s, "-100")
+	s = strings.TrimPrefix(s, "-")
+	return fmt.Sprintf("https://t.me/c/%s/%d", s, t.ThreadID)
+}
+
 type ChatCandidate struct {
 	WhatsAppJID    string
 	Title          string

@@ -56,7 +56,13 @@ func (c *Client) EditText(ctx context.Context, ref domain.MessageRef, content do
 	if err != nil {
 		return err
 	}
-	_, err = c.api.EditMessageText(ctx, &bot.EditMessageTextParams{ChatID: chat, MessageID: message, Text: content.Text})
+	params := &bot.EditMessageTextParams{
+		ChatID:    chat,
+		MessageID: message,
+		Text:      content.Text,
+		Entities:  toTelegramEntities(content.Entities),
+	}
+	_, err = c.api.EditMessageText(ctx, params)
 	return classify(ctx, err, true)
 }
 

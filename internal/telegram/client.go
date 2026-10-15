@@ -117,6 +117,22 @@ func (c *Client) identity() (int64, error) {
 	return c.botID, nil
 }
 
+func toTelegramEntities(entities []domain.TextEntity) []models.MessageEntity {
+	if len(entities) == 0 {
+		return nil
+	}
+	res := make([]models.MessageEntity, len(entities))
+	for i, ent := range entities {
+		res[i] = models.MessageEntity{
+			Type:   models.MessageEntityType(ent.Kind),
+			Offset: ent.StartUTF16,
+			Length: ent.LengthUTF16,
+			URL:    ent.URL,
+		}
+	}
+	return res
+}
+
 func (c *Client) SendText(ctx context.Context, request domain.SendTextRequest) (domain.SendResult, error) {
 	id, err := c.identity()
 	if err != nil {
@@ -125,7 +141,12 @@ func (c *Client) SendText(ctx context.Context, request domain.SendTextRequest) (
 	if request.TelegramTopic.ChatID != c.cfg.ChatID || request.TelegramTopic.ThreadID < 0 || request.TelegramTopic.Generation < 0 || request.Content.Validate() != nil || utf8.RuneCountInString(request.Content.Text) == 0 || utf8.RuneCountInString(request.Content.Text) > 4096 {
 		return domain.SendResult{}, adapterError(domain.Permanent, "invalid_target")
 	}
-	params := &bot.SendMessageParams{ChatID: c.cfg.ChatID, MessageThreadID: int(request.TelegramTopic.ThreadID), Text: request.Content.Text}
+	params := &bot.SendMessageParams{
+		ChatID:          c.cfg.ChatID,
+		MessageThreadID: int(request.TelegramTopic.ThreadID),
+		Text:            request.Content.Text,
+		Entities:        toTelegramEntities(request.Content.Entities),
+	}
 	if ref := request.Content.ReplyTo; ref != nil {
 		chat, message, err := c.target(*ref)
 		if err != nil || chat != c.cfg.ChatID {
