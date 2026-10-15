@@ -114,6 +114,7 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=whatsgram
           cache-to: type=gha,mode=max,scope=whatsgram
+          provenance: false
           build-args: |
             BUILD_STAGE=prebuilt
             GIT_COMMIT=${{ github.sha }}
