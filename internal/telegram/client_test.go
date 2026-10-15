@@ -91,6 +91,53 @@ func TestSendTextUsesSelectedClientAndNativeIdentity(t *testing.T) {
 	}
 }
 
+func TestSendPhotoUsesSelectedClientAndNativeIdentity(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if initialization(w, r) {
+			return
+		}
+		if r.URL.Path != "/bot"+testToken+"/sendPhoto" {
+			t.Errorf("unexpected method path: %s", r.URL.Path)
+		}
+		if err := r.ParseMultipartForm(1 << 20); err != nil {
+			t.Error(err)
+		}
+		if r.FormValue("chat_id") != "-10042" || r.FormValue("message_thread_id") != "7" || r.FormValue("caption") != "QR Pairing" {
+			t.Errorf("incorrect photo parameters")
+		}
+		file, header, err := r.FormFile("photo")
+		if err != nil {
+			t.Fatalf("missing photo file: %v", err)
+		}
+		defer file.Close()
+		data, _ := io.ReadAll(file)
+		if string(data) != "fake-png-bytes" || header.Filename != "qr.png" {
+			t.Errorf("unexpected file content: %s, %s", string(data), header.Filename)
+		}
+		writeOK(w, `{"message_id":34,"message_thread_id":7,"date":10,"chat":{"id":-10042,"type":"supergroup"},"from":{"id":901,"is_bot":true}}`)
+	}))
+	defer srv.Close()
+	c, err := New(testConfig(srv.URL), srv.Client(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Initialize(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	result, err := c.SendPhoto(context.Background(), domain.SendPhotoRequest{
+		TelegramTopic: domain.TopicRef{ChatID: -10042, ThreadID: 7, Generation: 1},
+		Caption:       "QR Pairing",
+		FileName:      "qr.png",
+		Data:          []byte("fake-png-bytes"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Parts) != 1 || result.Parts[0].Ref.Author != "901" || result.Parts[0].Ref.ID != "34" || !result.Parts[0].BridgeOwned {
+		t.Fatalf("unexpected delivery result: %#v", result)
+	}
+}
+
 type partRegistry struct{ part domain.DeliveredPart }
 
 func (p partRegistry) Part(context.Context, domain.MessageRef) (domain.DeliveredPart, error) {

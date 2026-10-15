@@ -213,6 +213,13 @@ type SendTextRequest struct {
 	TelegramTopic  TopicRef
 	Content        TextContent
 }
+type SendPhotoRequest struct {
+	OperationKey  string
+	TelegramTopic TopicRef
+	Caption       string
+	FileName      string
+	Data          []byte
+}
 
 const (
 	RolePrimary         = "primary"
@@ -266,6 +273,7 @@ type TelegramPort interface {
 	CreateTopic(context.Context, int64, string) (TopicRef, error)
 	RenameTopic(context.Context, TopicRef, string) error
 	SendText(context.Context, SendTextRequest) (SendResult, error)
+	SendPhoto(context.Context, SendPhotoRequest) (SendResult, error)
 	EditText(context.Context, MessageRef, TextContent) error
 	Delete(context.Context, MessageRef) error
 	SetOwnReaction(context.Context, MessageRef, string) error
@@ -370,12 +378,14 @@ type RecoveryDecision struct {
 	Code        string
 }
 
-func (Event) LogValue() slog.Value                 { return slog.StringValue("Event[redacted]") }
-func (PairingNotice) LogValue() slog.Value         { return slog.StringValue("PairingNotice[redacted]") }
-func (e AdapterError) LogValue() slog.Value        { return slog.StringValue(e.Error()) }
-func (TextContent) Format(s fmt.State, _ rune)     { io.WriteString(s, "TextContent[redacted]") }
-func (TextContent) LogValue() slog.Value           { return slog.StringValue("TextContent[redacted]") }
-func (Delivery) Format(s fmt.State, _ rune)        { io.WriteString(s, "Delivery[redacted]") }
-func (Delivery) LogValue() slog.Value              { return slog.StringValue("Delivery[redacted]") }
-func (SendTextRequest) Format(s fmt.State, _ rune) { io.WriteString(s, "SendTextRequest[redacted]") }
-func (SendTextRequest) LogValue() slog.Value       { return slog.StringValue("SendTextRequest[redacted]") }
+func (Event) LogValue() slog.Value                  { return slog.StringValue("Event[redacted]") }
+func (PairingNotice) LogValue() slog.Value          { return slog.StringValue("PairingNotice[redacted]") }
+func (e AdapterError) LogValue() slog.Value         { return slog.StringValue(e.Error()) }
+func (TextContent) Format(s fmt.State, _ rune)      { io.WriteString(s, "TextContent[redacted]") }
+func (TextContent) LogValue() slog.Value            { return slog.StringValue("TextContent[redacted]") }
+func (Delivery) Format(s fmt.State, _ rune)         { io.WriteString(s, "Delivery[redacted]") }
+func (Delivery) LogValue() slog.Value               { return slog.StringValue("Delivery[redacted]") }
+func (SendTextRequest) Format(s fmt.State, _ rune)  { io.WriteString(s, "SendTextRequest[redacted]") }
+func (SendTextRequest) LogValue() slog.Value        { return slog.StringValue("SendTextRequest[redacted]") }
+func (SendPhotoRequest) Format(s fmt.State, _ rune) { io.WriteString(s, "SendPhotoRequest[redacted]") }
+func (SendPhotoRequest) LogValue() slog.Value       { return slog.StringValue("SendPhotoRequest[redacted]") }

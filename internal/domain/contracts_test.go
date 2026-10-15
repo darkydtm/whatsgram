@@ -62,7 +62,7 @@ func TestSourceVersionDoesNotInventCrossSourceOrder(t *testing.T) {
 
 func TestSensitiveTypesFormatSafely(t *testing.T) {
 	secret := "DO-NOT-EXPOSE"
-	values := []any{PairingNotice{Kind: "qr", Secret: NewPairingSecret(secret)}, Event{Text: &TextContent{Text: secret}, Raw: []byte(secret), Metadata: []byte(secret)}, AdapterError{Class: Transient, Code: secret, Cause: errors.New(secret)}}
+	values := []any{PairingNotice{Kind: "qr", Secret: NewPairingSecret(secret)}, Event{Text: &TextContent{Text: secret}, Raw: []byte(secret), Metadata: []byte(secret)}, AdapterError{Class: Transient, Code: secret, Cause: errors.New(secret)}, SendPhotoRequest{Caption: secret}}
 	for _, v := range values {
 		for _, format := range []string{"%v", "%+v", "%#v"} {
 			if strings.Contains(fmt.Sprintf(format, v), secret) {
@@ -74,7 +74,7 @@ func TestSensitiveTypesFormatSafely(t *testing.T) {
 
 func TestSensitiveTypesDoNotLeakThroughStructuredLogging(t *testing.T) {
 	secret := "DO-NOT-EXPOSE"
-	values := []any{Event{Text: &TextContent{Text: secret}, Raw: []byte(secret)}, PairingNotice{Secret: NewPairingSecret(secret)}, TextContent{Text: secret}, Delivery{Text: &TextContent{Text: secret}}, AdapterError{Code: secret, Cause: errors.New(secret)}}
+	values := []any{Event{Text: &TextContent{Text: secret}, Raw: []byte(secret)}, PairingNotice{Secret: NewPairingSecret(secret)}, TextContent{Text: secret}, Delivery{Text: &TextContent{Text: secret}}, AdapterError{Code: secret, Cause: errors.New(secret)}, SendPhotoRequest{Caption: secret}}
 	for _, value := range values {
 		var out bytes.Buffer
 		slog.New(slog.NewJSONHandler(&out, nil)).Info("safe", "value", value)

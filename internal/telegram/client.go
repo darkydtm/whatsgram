@@ -1,6 +1,7 @@
 package telegram
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -146,6 +147,44 @@ func (c *Client) SendText(ctx context.Context, request domain.SendTextRequest) (
 		return domain.SendResult{}, adapterError(domain.Uncertain, "uncertain")
 	}
 	part := domain.DeliveredPart{Ref: domain.MessageRef{Platform: domain.Telegram, Chat: strconv.FormatInt(c.cfg.ChatID, 10), Author: strconv.FormatInt(id, 10), ID: strconv.Itoa(message.ID)}, Role: domain.RolePrimary, BridgeOwned: true, Capabilities: domain.CanEditText | domain.CanDelete | domain.CanReact}
+	return domain.SendResult{Parts: []domain.DeliveredPart{part}, AcceptedAt: time.Now().UTC()}, nil
+}
+
+func (c *Client) SendPhoto(ctx context.Context, request domain.SendPhotoRequest) (domain.SendResult, error) {
+	id, err := c.identity()
+	if err != nil {
+		return domain.SendResult{}, err
+	}
+	if request.TelegramTopic.ChatID != c.cfg.ChatID || request.TelegramTopic.ThreadID < 0 || request.TelegramTopic.Generation < 0 || len(request.Data) == 0 || len(request.Data) > 10*1024*1024 || utf8.RuneCountInString(request.Caption) > 1024 {
+		return domain.SendResult{}, adapterError(domain.Permanent, "invalid_target")
+	}
+	filename := request.FileName
+	if filename == "" {
+		filename = "qrcode.png"
+	}
+	params := &bot.SendPhotoParams{
+		ChatID:          c.cfg.ChatID,
+		MessageThreadID: int(request.TelegramTopic.ThreadID),
+		Photo: &models.InputFileUpload{
+			Filename: filename,
+			Data:     bytes.NewReader(request.Data),
+		},
+		Caption: request.Caption,
+	}
+	if err := ctx.Err(); err != nil {
+		return domain.SendResult{}, err
+	}
+	if err := c.Initialize(ctx); err != nil {
+		return domain.SendResult{}, err
+	}
+	message, err := c.api.SendPhoto(ctx, params)
+	if err != nil {
+		return domain.SendResult{}, classify(ctx, err, true)
+	}
+	if message == nil || message.ID <= 0 || message.Chat.ID != c.cfg.ChatID || message.From == nil || message.From.ID != id || (params.MessageThreadID > 0 && message.MessageThreadID != params.MessageThreadID) {
+		return domain.SendResult{}, adapterError(domain.Uncertain, "uncertain")
+	}
+	part := domain.DeliveredPart{Ref: domain.MessageRef{Platform: domain.Telegram, Chat: strconv.FormatInt(c.cfg.ChatID, 10), Author: strconv.FormatInt(id, 10), ID: strconv.Itoa(message.ID)}, Role: domain.RolePrimary, BridgeOwned: true, Capabilities: domain.CanDelete | domain.CanReact}
 	return domain.SendResult{Parts: []domain.DeliveredPart{part}, AcceptedAt: time.Now().UTC()}, nil
 }
 
