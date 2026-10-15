@@ -9,6 +9,7 @@ import (
 	"github.com/darkydtm/whatsgram/internal/admin"
 	"github.com/darkydtm/whatsgram/internal/domain"
 	"github.com/darkydtm/whatsgram/internal/store"
+	"github.com/skip2/go-qrcode"
 )
 
 type AdminExecutor struct {
@@ -97,6 +98,13 @@ func (a *AdminExecutor) handlePair(ctx context.Context, cmd admin.ParsedCommand,
 			return a.coord.reply(ctx, in, "QR pairing channel closed.")
 		}
 		secret := notice.Secret.Reveal()
+		caption := fmt.Sprintf("WhatsApp QR Pairing:\nScan this QR code with WhatsApp (Linked Devices)\nExpires at: %s", notice.ExpiresAt.UTC().Format(time.RFC3339))
+		png, err := qrcode.Encode(secret, qrcode.Medium, 512)
+		if err == nil {
+			if err := a.coord.replyPhoto(ctx, in, caption, "whatsapp-pairing-qr.png", png); err == nil {
+				return nil
+			}
+		}
 		msg := fmt.Sprintf("WhatsApp QR Pairing:\nSecret: %s\nExpires at: %s", secret, notice.ExpiresAt.UTC().Format(time.RFC3339))
 		return a.coord.reply(ctx, in, msg)
 	case <-ctx.Done():
@@ -340,5 +348,24 @@ func (c *Coordinator) reply(ctx context.Context, in admin.Input, text string) er
 		},
 	}
 	_, err := c.tgPort.SendText(ctx, req)
+	return err
+}
+
+func (c *Coordinator) replyPhoto(ctx context.Context, in admin.Input, caption, filename string, data []byte) error {
+	chatID := in.ChatID
+	if chatID == 0 {
+		chatID = c.cfg.Telegram.ChatID
+	}
+	req := domain.SendPhotoRequest{
+		OperationKey: fmt.Sprintf("reply-photo:%d:%d", in.UserID, time.Now().UnixNano()),
+		TelegramTopic: domain.TopicRef{
+			ChatID:   chatID,
+			ThreadID: in.ThreadID,
+		},
+		Caption:  caption,
+		FileName: filename,
+		Data:     data,
+	}
+	_, err := c.tgPort.SendPhoto(ctx, req)
 	return err
 }

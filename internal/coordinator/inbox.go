@@ -64,7 +64,7 @@ func (c *Coordinator) StepInbox(ctx context.Context) error {
 
 func (c *Coordinator) handleTelegramEvent(ctx context.Context, e domain.Event, token string, now time.Time) error {
 	in, rawText := parseTelegramInput(e)
-	in.Text = normalizeCommandText(in.Text)
+	in.Text = c.normalizeCommandText(in.Text)
 
 	decision := c.policy.Decide(in)
 	if decision.Kind == admin.Command {
@@ -689,7 +689,7 @@ func parseTelegramInput(e domain.Event) (admin.Input, string) {
 	return in, text
 }
 
-func normalizeCommandText(text string) string {
+func (c *Coordinator) normalizeCommandText(text string) string {
 	trimmed := strings.TrimSpace(text)
 	fields := strings.Fields(trimmed)
 	if len(fields) == 0 {
@@ -705,6 +705,9 @@ func normalizeCommandText(text string) string {
 
 	if cmdVerb == "/pair" {
 		if len(fields) == 1 {
+			if c != nil && c.cfg.WhatsApp.PairingMode == "code" && c.cfg.WhatsApp.Phone != "" {
+				return cmdVerb + atBot + " code " + c.cfg.WhatsApp.Phone
+			}
 			return cmdVerb + atBot + " qr"
 		}
 		if len(fields) == 2 && isDigits(fields[1]) {

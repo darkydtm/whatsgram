@@ -1,6 +1,7 @@
 package coordinator
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -34,7 +35,9 @@ type fakeTelegramPort struct {
 	nextThreadID    int64
 	nextMsgID       int64
 	sentRequests    []domain.SendTextRequest
+	sentPhotos      []domain.SendPhotoRequest
 	sendErr         error
+	sendPhotoErr    error
 	editedMessages  []telegramEditCall
 	editErr         error
 	deletedMessages []domain.MessageRef
@@ -129,6 +132,49 @@ func (f *fakeTelegramPort) LastSentRequest() domain.SendTextRequest {
 		return domain.SendTextRequest{}
 	}
 	return f.sentRequests[len(f.sentRequests)-1]
+}
+
+func (f *fakeTelegramPort) SendPhoto(ctx context.Context, req domain.SendPhotoRequest) (domain.SendResult, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.sendPhotoErr != nil {
+		return domain.SendResult{}, f.sendPhotoErr
+	}
+	f.nextMsgID++
+	f.sentPhotos = append(f.sentPhotos, req)
+	f.sentRequests = append(f.sentRequests, domain.SendTextRequest{
+		OperationKey:  req.OperationKey,
+		TelegramTopic: req.TelegramTopic,
+		Content: domain.TextContent{
+			Text: req.Caption,
+		},
+	})
+	part := domain.DeliveredPart{
+		Ref: domain.MessageRef{
+			Platform: domain.Telegram,
+			Chat:     strconv.FormatInt(req.TelegramTopic.ChatID, 10),
+			Author:   strconv.FormatInt(req.TelegramTopic.ChatID, 10),
+			ID:       fmt.Sprintf("tg-msg-%d", f.nextMsgID),
+		},
+		Index:           0,
+		Role:            domain.RolePrimary,
+		BridgeOwned:     true,
+		Capabilities:    domain.CanDelete | domain.CanReact,
+		TopicGeneration: req.TelegramTopic.Generation,
+	}
+	return domain.SendResult{
+		Parts:      []domain.DeliveredPart{part},
+		AcceptedAt: time.Now(),
+	}, nil
+}
+
+func (f *fakeTelegramPort) LastSentPhoto() domain.SendPhotoRequest {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.sentPhotos) == 0 {
+		return domain.SendPhotoRequest{}
+	}
+	return f.sentPhotos[len(f.sentPhotos)-1]
 }
 
 type whatsAppEditCall struct {
@@ -444,6 +490,13 @@ func TestAdminCommandsPairing(t *testing.T) {
 	if !strings.Contains(lastTg.Content.Text, "WhatsApp QR Pairing") {
 		t.Fatalf("expected QR pairing reply, got: %s", lastTg.Content.Text)
 	}
+	lastPhoto := tgPort.LastSentPhoto()
+	if len(lastPhoto.Data) == 0 {
+		t.Fatal("expected QR code photo to be sent")
+	}
+	if !bytes.HasPrefix(lastPhoto.Data, []byte("\x89PNG\r\n\x1a\n")) {
+		t.Fatal("expected QR photo data to be valid PNG format")
+	}
 
 	codeEvent := makeTelegramMessageEvent("11", -10012345, 42, 0, "/pair 15551234567")
 	if _, err := st.Accept(ctx, codeEvent); err != nil {
@@ -457,6 +510,48 @@ func TestAdminCommandsPairing(t *testing.T) {
 	lastTg = tgPort.LastSentRequest()
 	if !strings.Contains(lastTg.Content.Text, "WhatsApp Pairing Code") {
 		t.Fatalf("expected code pairing reply, got: %s", lastTg.Content.Text)
+	}
+}
+
+func TestAdminCommandsPairingPhotoFallback(t *testing.T) {
+	coord, st, tgPort, _, _ := setupTestEnvironment(t)
+	ctx := context.Background()
+
+	tgPort.sendPhotoErr = errors.New("cannot send photo")
+
+	qrEvent := makeTelegramMessageEvent("12", -10012345, 42, 0, "/pair")
+	if _, err := st.Accept(ctx, qrEvent); err != nil {
+		t.Fatalf("failed to accept pair qr event: %v", err)
+	}
+
+	if err := coord.StepInbox(ctx); err != nil {
+		t.Fatalf("StepInbox failed: %v", err)
+	}
+
+	lastTg := tgPort.LastSentRequest()
+	if !strings.Contains(lastTg.Content.Text, "WhatsApp QR Pairing") || !strings.Contains(lastTg.Content.Text, "Secret:") {
+		t.Fatalf("expected fallback text QR pairing reply, got: %s", lastTg.Content.Text)
+	}
+}
+
+func TestAdminCommandsPairingDefaultsToConfiguredMode(t *testing.T) {
+	coord, st, tgPort, _, _ := setupTestEnvironment(t)
+	coord.cfg.WhatsApp.PairingMode = "code"
+	coord.cfg.WhatsApp.Phone = "15559876543"
+	ctx := context.Background()
+
+	event := makeTelegramMessageEvent("13", -10012345, 42, 0, "/pair")
+	if _, err := st.Accept(ctx, event); err != nil {
+		t.Fatalf("failed to accept pair event: %v", err)
+	}
+
+	if err := coord.StepInbox(ctx); err != nil {
+		t.Fatalf("StepInbox failed: %v", err)
+	}
+
+	lastTg := tgPort.LastSentRequest()
+	if !strings.Contains(lastTg.Content.Text, "WhatsApp Pairing Code") {
+		t.Fatalf("expected code pairing reply when config PairingMode=code, got: %s", lastTg.Content.Text)
 	}
 }
 
