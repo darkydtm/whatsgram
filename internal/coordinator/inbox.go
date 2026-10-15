@@ -367,7 +367,13 @@ func (c *Coordinator) handleTelegramEvent(ctx context.Context, e domain.Event, t
 func (c *Coordinator) handleWhatsAppEvent(ctx context.Context, e domain.Event, token string, now time.Time) error {
 	chat, err := c.store.Chat(ctx, e.Chat)
 	if err != nil || chat.Topic == nil || chat.State != store.ChatActive {
-		return c.completeInbox(ctx, e, token, now)
+		if _, err := c.EnsureTopic(ctx, e.Chat, ""); err != nil {
+			return c.completeInbox(ctx, e, token, now)
+		}
+		chat, err = c.store.Chat(ctx, e.Chat)
+		if err != nil || chat.Topic == nil || chat.State != store.ChatActive {
+			return c.completeInbox(ctx, e, token, now)
+		}
 	}
 
 	isFromMe := isWhatsAppFromMe(e, c.cfg.WhatsApp.Phone)
@@ -432,7 +438,7 @@ func (c *Coordinator) handleWhatsAppEvent(ctx context.Context, e domain.Event, t
 		if tgPart == nil {
 			return c.completeInbox(ctx, e, token, now)
 		}
-		formatted := formatWhatsAppText(e, isFromMe)
+		formatted := c.formatWhatsAppText(ctx, e, isFromMe)
 		if formatted == nil {
 			return c.completeInbox(ctx, e, token, now)
 		}
@@ -529,7 +535,7 @@ func (c *Coordinator) handleWhatsAppEvent(ctx context.Context, e domain.Event, t
 		return c.store.PlanEvent(ctx, e, token, []domain.Delivery{delivery}, now)
 
 	default:
-		formatted := formatWhatsAppText(e, isFromMe)
+		formatted := c.formatWhatsAppText(ctx, e, isFromMe)
 		if formatted == nil {
 			reason := "unsupported media"
 			if len(e.Metadata) > 0 {
@@ -549,10 +555,25 @@ func (c *Coordinator) handleWhatsAppEvent(ctx context.Context, e domain.Event, t
 				formatted = prependText(formatted, "You: ")
 			} else if strings.HasSuffix(e.Chat, "@g.us") {
 				author := e.Actor
-				if idx := strings.Index(author, "@"); idx != -1 {
-					author = author[:idx]
+				authorName := ""
+				if author != "" {
+					if m, err := c.waPort.GetContactMeta(ctx, author); err == nil && m.Name != "" {
+						authorName = m.Name
+					}
 				}
-				formatted = prependText(formatted, fmt.Sprintf("[%s]: ", author))
+				if authorName == "" {
+					authorName = author
+					if idx := strings.Index(authorName, "@"); idx != -1 {
+						authorName = authorName[:idx]
+					}
+				}
+				var authorURL string
+				if author != "" {
+					if authorTopic, err := c.EnsureTopic(ctx, author, authorName); err == nil {
+						authorURL = authorTopic.URL()
+					}
+				}
+				formatted = appendHyperlink(formatted, authorName, authorURL)
 			}
 		}
 		if formatted.ReplyTo != nil && formatted.ReplyTo.Platform != domain.Telegram {
@@ -752,7 +773,7 @@ func isWhatsAppFromMe(e domain.Event, phone string) bool {
 	return false
 }
 
-func formatWhatsAppText(e domain.Event, isFromMe bool) *domain.TextContent {
+func (c *Coordinator) formatWhatsAppText(ctx context.Context, e domain.Event, isFromMe bool) *domain.TextContent {
 	if len(e.Metadata) > 0 && (e.Text == nil || e.Text.Text == "") {
 		var meta struct {
 			Type      string   `json:"type"`
@@ -794,10 +815,25 @@ func formatWhatsAppText(e domain.Event, isFromMe bool) *domain.TextContent {
 	}
 	if strings.HasSuffix(e.Chat, "@g.us") {
 		author := e.Actor
-		if idx := strings.Index(author, "@"); idx != -1 {
-			author = author[:idx]
+		authorName := ""
+		if author != "" {
+			if m, err := c.waPort.GetContactMeta(ctx, author); err == nil && m.Name != "" {
+				authorName = m.Name
+			}
 		}
-		return prependText(e.Text, fmt.Sprintf("[%s]: ", author))
+		if authorName == "" {
+			authorName = author
+			if idx := strings.Index(authorName, "@"); idx != -1 {
+				authorName = authorName[:idx]
+			}
+		}
+		var authorURL string
+		if author != "" {
+			if authorTopic, err := c.EnsureTopic(ctx, author, authorName); err == nil {
+				authorURL = authorTopic.URL()
+			}
+		}
+		return appendHyperlink(e.Text, authorName, authorURL)
 	}
 	return e.Text
 }

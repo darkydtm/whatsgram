@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/darkydtm/whatsgram/internal/admin"
@@ -120,48 +121,33 @@ func (a *AdminExecutor) handleSync(ctx context.Context, in admin.Input) error {
 		return a.coord.reply(ctx, in, "Failed to discover WhatsApp chats.")
 	}
 
-	chatID := in.ChatID
-	if chatID == 0 {
-		chatID = a.coord.cfg.Telegram.ChatID
+	var groups, contacts []domain.ChatCandidate
+	for _, cand := range candidates {
+		if strings.HasSuffix(cand.WhatsAppJID, "@g.us") || cand.Source == "group" {
+			groups = append(groups, cand)
+		} else {
+			contacts = append(contacts, cand)
+		}
 	}
+	ordered := append(groups, contacts...)
 
 	synced := 0
 	existing := 0
 	failed := 0
 
-	for _, cand := range candidates {
+	for _, cand := range ordered {
 		existingChat, err := a.coord.store.Chat(ctx, cand.WhatsAppJID)
 		if err == nil && existingChat.Topic != nil && existingChat.State == store.ChatActive {
 			existing++
 			continue
 		}
 
-		_ = a.coord.store.DiscoverChat(ctx, cand, chatID)
-
-		title := cand.Title
-		if title == "" {
-			title = cand.WhatsAppJID
-		}
-
-		topicRef, err := a.coord.tgPort.CreateTopic(ctx, chatID, title)
+		_, err = a.coord.EnsureTopic(ctx, cand.WhatsAppJID, cand.Title)
 		if err != nil {
 			failed++
 			continue
 		}
-
-		gen := int64(1)
-		if ch, err := a.coord.store.Chat(ctx, cand.WhatsAppJID); err == nil {
-			gen = ch.Generation + 1
-		}
-		topicRef.Generation = gen
-
-		if err := a.coord.store.BindTopic(ctx, cand.WhatsAppJID, topicRef); err != nil {
-			failed++
-			continue
-		}
-
 		synced++
-		a.coord.activeChatCount.Add(1)
 	}
 
 	msg := fmt.Sprintf("Sync completed: %d synced, %d existing, %d failed", synced, existing, failed)

@@ -206,6 +206,9 @@ type fakeWhatsAppPort struct {
 	revokeErr       error
 	reactions       []whatsAppReactionCall
 	reactionErr     error
+	contacts        map[string]domain.ContactMeta
+	groups          map[string]domain.GroupMeta
+	commonGroups    map[string][]domain.GroupMeta
 }
 
 func (f *fakeWhatsAppPort) Run(ctx context.Context, sink domain.EventSink) error {
@@ -294,18 +297,31 @@ func (f *fakeWhatsAppPort) LastSentRequest() domain.SendTextRequest {
 func (f *fakeWhatsAppPort) GetContactMeta(ctx context.Context, jid string) (domain.ContactMeta, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.contacts != nil {
+		if m, ok := f.contacts[jid]; ok {
+			return m, nil
+		}
+	}
 	return domain.ContactMeta{JID: jid, Name: jid, Phone: "+" + jid}, nil
 }
 
 func (f *fakeWhatsAppPort) GetGroupMeta(ctx context.Context, jid string) (domain.GroupMeta, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.groups != nil {
+		if m, ok := f.groups[jid]; ok {
+			return m, nil
+		}
+	}
 	return domain.GroupMeta{JID: jid, Name: jid}, nil
 }
 
 func (f *fakeWhatsAppPort) GetCommonGroups(ctx context.Context, jid string) ([]domain.GroupMeta, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.commonGroups != nil {
+		return f.commonGroups[jid], nil
+	}
 	return nil, nil
 }
 
@@ -728,8 +744,12 @@ func TestForwardWhatsAppToTelegramDirectAndGroup(t *testing.T) {
 	if lastTg.TelegramTopic.ThreadID != 22 {
 		t.Fatalf("expected thread 22, got: %d", lastTg.TelegramTopic.ThreadID)
 	}
-	if lastTg.Content.Text != "[15559876543]: Group msg" {
-		t.Fatalf("expected formatted text '[15559876543]: Group msg', got: %s", lastTg.Content.Text)
+	expectedText := "Group msg\n15559876543@s.whatsapp.net"
+	if lastTg.Content.Text != expectedText {
+		t.Fatalf("expected formatted text %q, got: %s", expectedText, lastTg.Content.Text)
+	}
+	if len(lastTg.Content.Entities) != 1 || lastTg.Content.Entities[0].Kind != "text_link" {
+		t.Fatalf("expected text_link entity, got: %+v", lastTg.Content.Entities)
 	}
 }
 
