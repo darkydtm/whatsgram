@@ -1,0 +1,5 @@
+# Binaries and build output
+/whatsgram
+bin/
+*.exe
+*.test
