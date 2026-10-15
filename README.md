@@ -112,6 +112,14 @@ docker run -d \
   whatsgram:latest
 ```
 
+### Option C: Docker Compose
+
+Run using Docker Compose:
+
+```bash
+docker compose up -d
+```
+
 ---
 
 ## WhatsApp Device Pairing
