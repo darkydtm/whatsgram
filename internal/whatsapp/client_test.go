@@ -193,3 +193,40 @@ func TestDiscoverChats(t *testing.T) {
 		t.Fatalf("unexpected group meta: %+v", groupMeta)
 	}
 }
+
+func TestFormatContactPhoneAndTitleLIDHandling(t *testing.T) {
+	lidJID := types.NewJID("104829375028475", types.HiddenUserServer)
+	pnJID := types.NewJID("15551234567", types.DefaultUserServer)
+
+	// LID without phone must not format as phone number
+	infoEmpty := types.ContactInfo{}
+	if phone := FormatContactPhone(infoEmpty, lidJID); phone != "" {
+		t.Fatalf("expected empty phone for LID JID, got %s", phone)
+	}
+
+	// PN JID formats with +
+	if phone := FormatContactPhone(infoEmpty, pnJID); phone != "+15551234567" {
+		t.Fatalf("expected +15551234567 for PN JID, got %s", phone)
+	}
+
+	// Priority: ContactName -> PushName -> Phone
+	infoFullName := types.ContactInfo{FullName: "Full Name", PushName: "Push Name"}
+	if title := FormatContactTitle(infoFullName, pnJID); title != "Full Name" {
+		t.Fatalf("expected Full Name, got %s", title)
+	}
+
+	infoPushOnly := types.ContactInfo{PushName: "Push Name"}
+	if title := FormatContactTitle(infoPushOnly, pnJID); title != "Push Name" {
+		t.Fatalf("expected Push Name, got %s", title)
+	}
+
+	infoPhoneOnly := types.ContactInfo{}
+	if title := FormatContactTitle(infoPhoneOnly, pnJID); title != "+15551234567" {
+		t.Fatalf("expected +15551234567, got %s", title)
+	}
+
+	// LID with no name and no phone returns non-AD string, not fake phone
+	if title := FormatContactTitle(infoPhoneOnly, lidJID); title != lidJID.ToNonAD().String() {
+		t.Fatalf("expected %s, got %s", lidJID.ToNonAD().String(), title)
+	}
+}

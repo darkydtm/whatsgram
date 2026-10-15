@@ -166,7 +166,7 @@ func FormatContactPhone(info types.ContactInfo, jid types.JID) string {
 	if info.RedactedPhone != "" {
 		return info.RedactedPhone
 	}
-	if jid.User != "" {
+	if jid.Server == types.DefaultUserServer && jid.User != "" {
 		return "+" + jid.User
 	}
 	return ""
@@ -175,6 +175,9 @@ func FormatContactPhone(info types.ContactInfo, jid types.JID) string {
 func FormatContactTitle(info types.ContactInfo, jid types.JID) string {
 	if name := ContactName(info); name != "" {
 		return name
+	}
+	if info.PushName != "" {
+		return info.PushName
 	}
 	if phone := FormatContactPhone(info, jid); phone != "" {
 		return phone
@@ -281,10 +284,19 @@ func (c *Client) GetContactMeta(ctx context.Context, jidStr string) (domain.Cont
 	if c.device != nil && c.device.Contacts != nil {
 		info, _ = c.device.Contacts.GetContact(ctx, parsed)
 	}
+	phone := FormatContactPhone(info, parsed)
+	if phone == "" {
+		if canon, err := c.canonical(ctx, parsed); err == nil && !canon.IsEmpty() {
+			if c.device != nil && c.device.Contacts != nil && info.Found == false {
+				info, _ = c.device.Contacts.GetContact(ctx, canon)
+			}
+			phone = FormatContactPhone(info, canon)
+		}
+	}
 	return domain.ContactMeta{
 		JID:   parsed.ToNonAD().String(),
 		Name:  FormatContactName(info, parsed),
-		Phone: FormatContactPhone(info, parsed),
+		Phone: phone,
 	}, nil
 }
 
@@ -368,10 +380,19 @@ func (c *Client) GetGroupMeta(ctx context.Context, jidStr string) (domain.GroupM
 		if name == "" {
 			name = FormatContactName(info, pJID)
 		}
+		phone := FormatContactPhone(info, pJID)
+		if phone == "" && !p.PhoneNumber.IsEmpty() {
+			phone = FormatContactPhone(info, p.PhoneNumber)
+		}
+		if phone == "" {
+			if canon, err := c.canonical(ctx, pJID); err == nil && !canon.IsEmpty() {
+				phone = FormatContactPhone(info, canon)
+			}
+		}
 		meta.Participants = append(meta.Participants, domain.ContactMeta{
 			JID:   pJID.ToNonAD().String(),
 			Name:  name,
-			Phone: FormatContactPhone(info, pJID),
+			Phone: phone,
 		})
 	}
 	return meta, nil
