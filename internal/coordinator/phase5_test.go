@@ -3,12 +3,16 @@ package coordinator
 import (
 	"context"
 	"encoding/json"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/darkydtm/whatsgram/internal/admin"
+	"github.com/darkydtm/whatsgram/internal/config"
 	"github.com/darkydtm/whatsgram/internal/domain"
+	"github.com/darkydtm/whatsgram/internal/store"
 )
 
 func TestPhase5AdvancedEvents(t *testing.T) {
@@ -155,7 +159,7 @@ func TestPhase5AdvancedEvents(t *testing.T) {
 
 	t.Run("TimerAndExpirationHandling", func(t *testing.T) {
 		// Set chat timer to 500 milliseconds
-		coord.setChatTimer(waJID, 500*time.Millisecond)
+		coord.setChatTimer(ctx, waJID, 500*time.Millisecond)
 
 		ev := makeWhatsAppMessageEvent("ephemeral-1", waJID, "15559876543@s.whatsapp.net", false, "This message will expire")
 
@@ -185,6 +189,10 @@ func TestPhase5AdvancedEvents(t *testing.T) {
 			t.Fatalf("StepTimer failed: %v", err)
 		}
 
+		if err := coord.StepDelivery(ctx); err != nil {
+			t.Fatalf("StepDelivery for timer revoke failed: %v", err)
+		}
+
 		tgPort.mu.Lock()
 		defer tgPort.mu.Unlock()
 		if len(tgPort.deletedMessages) == 0 {
@@ -203,7 +211,7 @@ func TestPhase5AdvancedEvents(t *testing.T) {
 			t.Fatalf("StepInbox failed: %v", err)
 		}
 
-		dur, ok := coord.getChatTimer(waJID)
+		dur, ok := coord.getChatTimer(ctx, waJID)
 		if !ok || dur != 24*time.Hour {
 			t.Fatalf("expected timer 24h, got %v (ok=%v)", dur, ok)
 		}
@@ -232,4 +240,87 @@ func TestPhase5AdvancedEvents(t *testing.T) {
 			t.Fatalf("StepInbox failed: %v", err)
 		}
 	})
+}
+
+func TestPhase5TimerRestartResilience(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "restart_test.db")
+	st1, err := store.Open(context.Background(), dbPath, 2*time.Second)
+	if err != nil {
+		t.Fatalf("failed to open store: %v", err)
+	}
+
+	cfg := config.Default()
+	cfg.Telegram.ChatID = -10012345
+	cfg.Telegram.AllowedUserIDs = []int64{42}
+	cfg.WhatsApp.Phone = "15551234567"
+	policy, err := admin.NewPolicy(cfg.Telegram.ChatID, cfg.Telegram.AllowedUserIDs, "TestBot")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tgPort1 := &fakeTelegramPort{}
+	waPort1 := &fakeWhatsAppPort{}
+	pairingPort1 := &fakePairingPort{}
+
+	coord1, err := New(cfg, st1, tgPort1, waPort1, pairingPort1, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	waJID := "120363000000000000@g.us"
+	_ = st1.DiscoverChat(ctx, domain.ChatCandidate{WhatsAppJID: waJID, Title: "Group", Source: "group"}, -10012345)
+	_ = st1.BindTopic(ctx, waJID, domain.TopicRef{ChatID: -10012345, ThreadID: 100, Generation: 1})
+
+	// Set chat timer to 400ms
+	coord1.setChatTimer(ctx, waJID, 400*time.Millisecond)
+
+	ev := makeWhatsAppMessageEvent("ephemeral-restart", waJID, "15559876543@s.whatsapp.net", false, "Expiring text")
+	if _, err := st1.Accept(ctx, ev); err != nil {
+		t.Fatal(err)
+	}
+	if err := coord1.StepInbox(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := coord1.StepDelivery(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	// Close store and coordinator (simulate shutdown)
+	st1.Close()
+
+	// Simulate restart by opening fresh store and coordinator on the same db file
+	st2, err := store.Open(context.Background(), dbPath, 2*time.Second)
+	if err != nil {
+		t.Fatalf("failed to reopen store: %v", err)
+	}
+	defer st2.Close()
+
+	tgPort2 := &fakeTelegramPort{}
+	waPort2 := &fakeWhatsAppPort{}
+	coord2, err := New(cfg, st2, tgPort2, waPort2, pairingPort1, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify chat timer persisted across restart
+	dur, ok := coord2.getChatTimer(ctx, waJID)
+	if !ok || dur != 400*time.Millisecond {
+		t.Fatalf("expected timer 400ms after restart, got %v (ok=%v)", dur, ok)
+	}
+
+	// Wait for timer to expire
+	time.Sleep(500 * time.Millisecond)
+
+	if err := coord2.StepTimer(ctx); err != nil {
+		t.Fatalf("StepTimer after restart failed: %v", err)
+	}
+	if err := coord2.StepDelivery(ctx); err != nil {
+		t.Fatalf("StepDelivery after restart failed: %v", err)
+	}
+
+	tgPort2.mu.Lock()
+	defer tgPort2.mu.Unlock()
+	if len(tgPort2.deletedMessages) == 0 {
+		t.Fatal("expected expired ephemeral message to be deleted after restart")
+	}
 }
