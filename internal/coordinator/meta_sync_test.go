@@ -402,3 +402,58 @@ func TestContactTopicNamingPriorityAndFieldIsolation(t *testing.T) {
 		}
 	}
 }
+
+func TestTopicMetaCardWithAvatarPhotoAndFallback(t *testing.T) {
+	coord, _, tgPort, waPort, _ := setupTestEnvironment(t)
+	ctx := context.Background()
+	waPort.contacts = make(map[string]domain.ContactMeta)
+	waPort.avatars = make(map[string][]byte)
+
+	avatarJID := "15557777777@s.whatsapp.net"
+	waPort.contacts[avatarJID] = domain.ContactMeta{
+		JID:   avatarJID,
+		Name:  "Avatar User",
+		Phone: "+15557777777",
+	}
+	fakeAvatarData := []byte("fake-jpeg-photo-content")
+	waPort.avatars[avatarJID] = fakeAvatarData
+
+	avatarTopic, err := coord.EnsureTopic(ctx, avatarJID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	lastPhoto := tgPort.LastSentPhoto()
+	if lastPhoto.TelegramTopic.ThreadID != avatarTopic.ThreadID {
+		t.Fatalf("expected photo sent to topic %d, got %d", avatarTopic.ThreadID, lastPhoto.TelegramTopic.ThreadID)
+	}
+	if string(lastPhoto.Data) != string(fakeAvatarData) {
+		t.Fatalf("unexpected photo data: %s", string(lastPhoto.Data))
+	}
+	if !strings.Contains(lastPhoto.Caption, "👤 Справка контакта:") || !strings.Contains(lastPhoto.Caption, "Имя: Avatar User") {
+		t.Fatalf("expected caption to contain meta-card, got: %s", lastPhoto.Caption)
+	}
+
+	// Now test fallback when avatar is not present
+	noAvatarJID := "15558888888@s.whatsapp.net"
+	waPort.contacts[noAvatarJID] = domain.ContactMeta{
+		JID:   noAvatarJID,
+		Name:  "No Avatar",
+		Phone: "+15558888888",
+	}
+	noAvatarTopic, err := coord.EnsureTopic(ctx, noAvatarJID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var foundText bool
+	for _, req := range tgPort.sentRequests {
+		if req.TelegramTopic.ThreadID == noAvatarTopic.ThreadID && strings.Contains(req.Content.Text, "Имя: No Avatar") {
+			foundText = true
+			break
+		}
+	}
+	if !foundText {
+		t.Fatalf("expected text meta-card fallback for contact without avatar")
+	}
+}

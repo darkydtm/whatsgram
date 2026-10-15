@@ -209,6 +209,7 @@ type fakeWhatsAppPort struct {
 	contacts        map[string]domain.ContactMeta
 	groups          map[string]domain.GroupMeta
 	commonGroups    map[string][]domain.GroupMeta
+	avatars         map[string][]byte
 }
 
 func (f *fakeWhatsAppPort) Run(ctx context.Context, sink domain.EventSink) error {
@@ -321,6 +322,17 @@ func (f *fakeWhatsAppPort) GetCommonGroups(ctx context.Context, jid string) ([]d
 	defer f.mu.Unlock()
 	if f.commonGroups != nil {
 		return f.commonGroups[jid], nil
+	}
+	return nil, nil
+}
+
+func (f *fakeWhatsAppPort) GetAvatar(ctx context.Context, jid string) ([]byte, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.avatars != nil {
+		if data, ok := f.avatars[jid]; ok {
+			return data, nil
+		}
 	}
 	return nil, nil
 }

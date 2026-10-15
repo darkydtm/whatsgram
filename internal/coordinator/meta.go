@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"unicode/utf16"
+	"unicode/utf8"
 
 	"github.com/darkydtm/whatsgram/internal/domain"
 	"github.com/darkydtm/whatsgram/internal/store"
@@ -78,10 +79,26 @@ func (c *Coordinator) EnsureTopic(ctx context.Context, waJID string, titleHint s
 		metaContent = c.buildContactMetaCard(ctx, waJID, contactMeta)
 	}
 
-	_, _ = c.tgPort.SendText(ctx, domain.SendTextRequest{
-		TelegramTopic: topicRef,
-		Content:       metaContent,
-	})
+	avatarBytes, _ := c.waPort.GetAvatar(ctx, waJID)
+	sent := false
+	if len(avatarBytes) > 0 && utf8.RuneCountInString(metaContent.Text) <= 1024 {
+		_, err := c.tgPort.SendPhoto(ctx, domain.SendPhotoRequest{
+			TelegramTopic: topicRef,
+			Caption:       metaContent.Text,
+			Entities:      metaContent.Entities,
+			FileName:      "avatar.jpg",
+			Data:          avatarBytes,
+		})
+		if err == nil {
+			sent = true
+		}
+	}
+	if !sent {
+		_, _ = c.tgPort.SendText(ctx, domain.SendTextRequest{
+			TelegramTopic: topicRef,
+			Content:       metaContent,
+		})
+	}
 
 	return topicRef, nil
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -39,6 +40,7 @@ type networkClient interface {
 	PairPhone(context.Context, string, bool, whatsmeow.PairClientType, string) (string, error)
 	GetJoinedGroups(context.Context) ([]*types.GroupInfo, error)
 	GetGroupInfo(context.Context, types.JID) (*types.GroupInfo, error)
+	GetProfilePictureInfo(context.Context, types.JID, *whatsmeow.GetProfilePictureParams) (*types.ProfilePictureInfo, error)
 }
 
 type Client struct {
@@ -46,6 +48,7 @@ type Client struct {
 	network  networkClient
 	device   *store.Device
 	logger   *slog.Logger
+	http     *http.Client
 	mu       sync.Mutex
 	options  Options
 	running  bool
@@ -85,7 +88,7 @@ func New(ctx context.Context, device *store.Device, options Options) (*Client, e
 	if options.ReconnectBase < time.Millisecond || options.ReconnectMax < options.ReconnectBase || options.ReconnectMax > 5*time.Minute || options.MaxConnectAttempts < 1 || options.MaxConnectAttempts > 20 {
 		return nil, adapterError(domain.Permanent, "invalid_target")
 	}
-	return &Client{client: cli, network: cli, device: device, logger: logger, options: options}, nil
+	return &Client{client: cli, network: cli, device: device, logger: logger, options: options, http: &http.Client{Timeout: 20 * time.Second}}, nil
 }
 
 type libraryLog struct{}
@@ -367,6 +370,44 @@ func (c *Client) GetGroupMeta(ctx context.Context, jidStr string) (domain.GroupM
 		})
 	}
 	return meta, nil
+}
+
+func (c *Client) GetAvatar(ctx context.Context, jidStr string) ([]byte, error) {
+	if ctx == nil {
+		return nil, adapterError(domain.Permanent, "invalid_target")
+	}
+	parsed, err := parseChat(jidStr)
+	if err != nil {
+		return nil, err
+	}
+	if c.network == nil {
+		return nil, adapterError(domain.Transient, "not_connected")
+	}
+	info, err := c.network.GetProfilePictureInfo(ctx, parsed, &whatsmeow.GetProfilePictureParams{Preview: false})
+	if err != nil || info == nil || info.URL == "" {
+		return nil, adapterError(domain.Permanent, "invalid_target")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, info.URL, nil)
+	if err != nil {
+		return nil, adapterError(domain.Transient, "storage")
+	}
+	client := c.http
+	if client == nil {
+		client = &http.Client{Timeout: 20 * time.Second}
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, adapterError(domain.Transient, "not_connected")
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, adapterError(domain.Transient, "storage")
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
+	if err != nil || len(data) == 0 {
+		return nil, adapterError(domain.Transient, "storage")
+	}
+	return data, nil
 }
 
 func buildText(chat types.JID, content domain.TextContent) (*waE2E.Message, error) {

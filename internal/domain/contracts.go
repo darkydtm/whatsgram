@@ -236,6 +236,7 @@ type SendPhotoRequest struct {
 	OperationKey  string
 	TelegramTopic TopicRef
 	Caption       string
+	Entities      []TextEntity
 	FileName      string
 	Data          []byte
 }
@@ -308,6 +309,7 @@ type WhatsAppPort interface {
 	GetContactMeta(context.Context, string) (ContactMeta, error)
 	GetGroupMeta(context.Context, string) (GroupMeta, error)
 	GetCommonGroups(context.Context, string) ([]GroupMeta, error)
+	GetAvatar(context.Context, string) ([]byte, error)
 }
 type PairingNotice struct {
 	Kind      string

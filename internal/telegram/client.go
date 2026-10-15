@@ -190,7 +190,8 @@ func (c *Client) SendPhoto(ctx context.Context, request domain.SendPhotoRequest)
 			Filename: filename,
 			Data:     bytes.NewReader(request.Data),
 		},
-		Caption: request.Caption,
+		Caption:         request.Caption,
+		CaptionEntities: toTelegramEntities(request.Entities),
 	}
 	if err := ctx.Err(); err != nil {
 		return domain.SendResult{}, err
