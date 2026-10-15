@@ -114,10 +114,17 @@ docker run -d \
 
 ### Option C: Docker Compose
 
-Run using Docker Compose:
+Run using Docker Compose (pulls prebuilt image):
 
 ```bash
+docker compose pull
 docker compose up -d
+```
+
+For local development builds from source:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
 ```
 
 ---
