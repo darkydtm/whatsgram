@@ -112,6 +112,14 @@ func TestAdmissionDeduplicatesAndRejectsConflictingPayload(t *testing.T) {
 	if err := s.db.QueryRowContext(ctx, "SELECT state FROM bridge_inbox WHERE json_extract(dedupe_key,'$[5]')='future'").Scan(&state); err != nil || state != "quarantined" {
 		t.Fatal(state, err)
 	}
+	e = event("cmd")
+	e.Kind = domain.TelegramCommand
+	if _, err := s.Accept(ctx, e); err != nil {
+		t.Fatal("telegram command rejected", err)
+	}
+	if err := s.db.QueryRowContext(ctx, "SELECT state FROM bridge_inbox WHERE json_extract(dedupe_key,'$[5]')='cmd'").Scan(&state); err != nil || state != "pending" {
+		t.Fatal("telegram command must be pending, got", state, err)
+	}
 }
 
 func TestTelegramBatchCursorCommitsOrRollsBackTogether(t *testing.T) {

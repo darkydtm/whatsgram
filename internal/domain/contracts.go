@@ -82,20 +82,21 @@ func (v SourceVersion) Compare(other SourceVersion) (int, error) {
 type EventKind string
 
 const (
-	MessageCreate  EventKind = "message.create"
-	MessageEdit    EventKind = "message.edit"
-	MessageRevoke  EventKind = "message.revoke"
-	ReactionSet    EventKind = "reaction.set"
-	ChatDiscovered EventKind = "chat.discovered"
-	ChatTitle      EventKind = "chat.title"
-	ChatTimer      EventKind = "chat.timer"
-	TopicState     EventKind = "topic.state"
-	MessageKeep    EventKind = "message.keep"
+	MessageCreate   EventKind = "message.create"
+	MessageEdit     EventKind = "message.edit"
+	MessageRevoke   EventKind = "message.revoke"
+	ReactionSet     EventKind = "reaction.set"
+	ChatDiscovered  EventKind = "chat.discovered"
+	ChatTitle       EventKind = "chat.title"
+	ChatTimer       EventKind = "chat.timer"
+	TopicState      EventKind = "topic.state"
+	MessageKeep     EventKind = "message.keep"
+	TelegramCommand EventKind = "telegram.command"
 )
 
 func (k EventKind) Known() bool {
 	switch k {
-	case MessageCreate, MessageEdit, MessageRevoke, ReactionSet, ChatDiscovered, ChatTitle, ChatTimer, TopicState, MessageKeep:
+	case MessageCreate, MessageEdit, MessageRevoke, ReactionSet, ChatDiscovered, ChatTitle, ChatTimer, TopicState, MessageKeep, TelegramCommand:
 		return true
 	}
 	return false
