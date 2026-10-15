@@ -8,9 +8,9 @@ import (
 	"time"
 )
 
-func writeYAML(t *testing.T, content string) string {
+func writeEnv(t *testing.T, content string) string {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "config.yaml")
+	path := filepath.Join(t.TempDir(), "config.env")
 	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -27,34 +27,29 @@ func equalConfig(a, b Config) bool {
 	return reflect.DeepEqual(a, b)
 }
 
-func TestLoadYAML(t *testing.T) {
-	path := writeYAML(t, `telegram:
-  token: synthetic-secret
-  chat_id: -1001234567890
-  allowed_user_ids: [42, 43, 42]
-  endpoint: http://localhost:8081///
-  local_api: true
-whatsapp:
-  pairing_mode: code
-  phone: "15551234567"
-  history_policy: recent
-database:
-  path: custom/database.db
-  busy_timeout: 4s
-media:
-  temp_dir: custom/media
-  ffmpeg: custom/ffmpeg
-  max_bytes: 123456
-  max_duration: 4m
-  timeout: 20s
-  workers: 3
-runtime:
-  queue_capacity: 123
-  operation_timeout: 20s
-  max_attempts: 3
-  retry_base: 2s
-  retry_max: 20s
-  shutdown_timeout: 10s
+func TestLoadEnvFile(t *testing.T) {
+	path := writeEnv(t, `WHATSGRAM_TELEGRAM_TOKEN=synthetic-secret
+WHATSGRAM_TELEGRAM_CHAT_ID=-1001234567890
+WHATSGRAM_TELEGRAM_ALLOWED_USER_IDS="42, 43, 42"
+WHATSGRAM_TELEGRAM_ENDPOINT=http://localhost:8081///
+WHATSGRAM_TELEGRAM_LOCAL_API=true
+WHATSGRAM_WHATSAPP_PAIRING_MODE=code
+WHATSGRAM_WHATSAPP_PHONE="15551234567"
+WHATSGRAM_WHATSAPP_HISTORY_POLICY=recent
+WHATSGRAM_DATABASE_PATH=custom/database.db
+WHATSGRAM_DATABASE_BUSY_TIMEOUT=4s
+WHATSGRAM_MEDIA_TEMP_DIR=custom/media
+WHATSGRAM_MEDIA_FFMPEG=custom/ffmpeg
+WHATSGRAM_MEDIA_MAX_BYTES=123456
+WHATSGRAM_MEDIA_MAX_DURATION=4m
+WHATSGRAM_MEDIA_TIMEOUT=20s
+WHATSGRAM_MEDIA_WORKERS=3
+WHATSGRAM_RUNTIME_QUEUE_CAPACITY=123
+WHATSGRAM_RUNTIME_OPERATION_TIMEOUT=20s
+WHATSGRAM_RUNTIME_MAX_ATTEMPTS=3
+WHATSGRAM_RUNTIME_RETRY_BASE=2s
+WHATSGRAM_RUNTIME_RETRY_MAX=20s
+WHATSGRAM_RUNTIME_SHUTDOWN_TIMEOUT=10s
 `)
 	c, err := Load(path, noEnv)
 	if err != nil {
@@ -68,12 +63,12 @@ runtime:
 		Runtime:  Runtime{QueueCapacity: 123, OperationTimeout: 20 * time.Second, MaxAttempts: 3, RetryBase: 2 * time.Second, RetryMax: 20 * time.Second, ShutdownTimeout: 10 * time.Second},
 	}
 	if !equalConfig(c, want) {
-		t.Fatal("YAML overrides or normalization incorrect")
+		t.Fatal(".env overrides or normalization incorrect")
 	}
 }
 
-func TestLoadYAMLDefaults(t *testing.T) {
-	c, err := Load(writeYAML(t, "telegram:\n  token: synthetic-secret\n  chat_id: -1001234567890\n  allowed_user_ids: [42]\n"), noEnv)
+func TestLoadEnvDefaults(t *testing.T) {
+	c, err := Load(writeEnv(t, "WHATSGRAM_TELEGRAM_TOKEN=synthetic-secret\nWHATSGRAM_TELEGRAM_CHAT_ID=-1001234567890\nWHATSGRAM_TELEGRAM_ALLOWED_USER_IDS=42\n"), noEnv)
 	if err != nil {
 		t.Fatal(err)
 	}

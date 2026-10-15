@@ -36,7 +36,7 @@ func TestLoadInvalidEnvironment(t *testing.T) {
 		t.Run(tt.field, func(t *testing.T) {
 			for _, value := range tt.values {
 				values := map[string]string{"WHATSGRAM_" + tt.field: value}
-				c, err := Load(writeYAML(t, accessYAML), mapLookup(values))
+				c, err := Load(writeEnv(t, accessEnvFile), mapLookup(values))
 				if err == nil || !reflect.DeepEqual(c, Config{}) || strings.Contains(err.Error(), "synthetic-secret") {
 					t.Fatal("invalid present environment must fail without secret output")
 				}
@@ -52,18 +52,17 @@ func TestLoadInvalidEnvironment(t *testing.T) {
 }
 
 func TestLoadEmptyOptionalEnvironment(t *testing.T) {
-	path := writeYAML(t, accessYAML+"whatsapp:\n  phone: \"15551234567\"\nmedia:\n  temp_dir: yaml/media\ntelegram_extra: false\n")
-	if _, err := Load(path, mapLookup(accessEnv())); err == nil {
-		t.Fatal("valid environment must not hide unknown YAML fields")
-	}
-	path = writeYAML(t, accessYAML+"  local_api: true\nwhatsapp:\n  phone: \"15551234567\"\nmedia:\n  temp_dir: yaml/media\n")
+	path := writeEnv(t, accessEnvFile+`WHATSGRAM_WHATSAPP_PHONE="15551234567"
+WHATSGRAM_MEDIA_TEMP_DIR="test/media"
+WHATSGRAM_TELEGRAM_LOCAL_API="true"
+`)
 	c, err := Load(path, mapLookup(map[string]string{
 		"WHATSGRAM_WHATSAPP_PHONE":     "",
 		"WHATSGRAM_MEDIA_TEMP_DIR":     "",
 		"WHATSGRAM_TELEGRAM_LOCAL_API": "false",
 	}))
 	if err != nil || c.WhatsApp.Phone != "" || c.Media.TempDir != "" || c.Telegram.LocalAPI {
-		t.Fatal("present empty optional fields must clear YAML values")
+		t.Fatal("present empty optional fields must clear .env values")
 	}
 }
 

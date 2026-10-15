@@ -17,6 +17,11 @@ func accessEnv() map[string]string {
 	}
 }
 
+const accessEnvFile = `WHATSGRAM_TELEGRAM_TOKEN=synthetic-secret
+WHATSGRAM_TELEGRAM_CHAT_ID=-1001234567890
+WHATSGRAM_TELEGRAM_ALLOWED_USER_IDS=42
+`
+
 func TestLoadEnvPrecedence(t *testing.T) {
 	values := map[string]string{
 		"WHATSGRAM_TELEGRAM_TOKEN":            "env-secret",
@@ -42,27 +47,23 @@ func TestLoadEnvPrecedence(t *testing.T) {
 		"WHATSGRAM_RUNTIME_RETRY_MAX":         "25s",
 		"WHATSGRAM_RUNTIME_SHUTDOWN_TIMEOUT":  "12s",
 	}
-	path := writeYAML(t, accessYAML+`whatsapp:
-  pairing_mode: qr
-  phone: "15557654321"
-  history_policy: none
-database:
-  path: yaml/database.db
-  busy_timeout: 4s
-media:
-  temp_dir: yaml/media
-  ffmpeg: yaml/ffmpeg
-  max_bytes: 123456
-  max_duration: 4m
-  timeout: 20s
-  workers: 3
-runtime:
-  queue_capacity: 123
-  operation_timeout: 20s
-  max_attempts: 3
-  retry_base: 2s
-  retry_max: 20s
-  shutdown_timeout: 10s
+	path := writeEnv(t, accessEnvFile+`WHATSGRAM_WHATSAPP_PAIRING_MODE=qr
+WHATSGRAM_WHATSAPP_PHONE="15557654321"
+WHATSGRAM_WHATSAPP_HISTORY_POLICY=none
+WHATSGRAM_DATABASE_PATH=file/database.db
+WHATSGRAM_DATABASE_BUSY_TIMEOUT=4s
+WHATSGRAM_MEDIA_TEMP_DIR=file/media
+WHATSGRAM_MEDIA_FFMPEG=file/ffmpeg
+WHATSGRAM_MEDIA_MAX_BYTES=123456
+WHATSGRAM_MEDIA_MAX_DURATION=4m
+WHATSGRAM_MEDIA_TIMEOUT=20s
+WHATSGRAM_MEDIA_WORKERS=3
+WHATSGRAM_RUNTIME_QUEUE_CAPACITY=123
+WHATSGRAM_RUNTIME_OPERATION_TIMEOUT=20s
+WHATSGRAM_RUNTIME_MAX_ATTEMPTS=3
+WHATSGRAM_RUNTIME_RETRY_BASE=2s
+WHATSGRAM_RUNTIME_RETRY_MAX=20s
+WHATSGRAM_RUNTIME_SHUTDOWN_TIMEOUT=10s
 `)
 	want := Config{
 		Telegram: Telegram{Token: NewSecret("env-secret"), ChatID: -1009876543210, AllowedUserIDs: []int64{43, 44}, Endpoint: "http://127.0.0.1:8082", LocalAPI: true},
@@ -77,7 +78,7 @@ runtime:
 			t.Fatal(err)
 		}
 		if !equalConfig(c, want) {
-			t.Fatal("environment must override YAML and defaults")
+			t.Fatal("environment must override .env file and defaults")
 		}
 	}
 }

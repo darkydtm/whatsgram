@@ -38,18 +38,20 @@ func TestOutputInvalidVerbsHideTokenBytes(t *testing.T) {
 	}
 }
 
-func TestLoadMalformedYAMLHidesTokenBytes(t *testing.T) {
+func TestLoadMalformedEnvHidesTokenBytes(t *testing.T) {
 	canary := "synthetic-parser-canary-b9f87126d0a4"
 	for _, data := range []string{
-		"telegram:\n  token: [" + canary + "\n",
-		"telegram:\n  token: [" + canary + "]\n",
-		"telegram:\n  token: " + canary + "\n  chat_id: -1e100\n",
-		"telegram:\n  token: " + canary + "\n  unknown: true\n",
-		"telegram:\n  token: " + canary + "\n---\n{}\n",
+		"WHATSGRAM_TELEGRAM_TOKEN\n",
+		"WHATSGRAM_TELEGRAM_TOKEN=\"" + canary + "\n",
+		"WHATSGRAM_TELEGRAM_TOKEN='" + canary + "\n",
+		"WHATSGRAM_TELEGRAM_TOKEN=\"" + canary + "\"extra\n",
+		"WHATSGRAM_TELEGRAM_TOKEN='" + canary + "'extra\n",
+		"=value\n",
+		canary + "\n",
 	} {
-		c, err := Load(writeYAML(t, data), mapLookup(accessEnv()))
+		c, err := Load(writeEnv(t, data), mapLookup(accessEnv()))
 		if err == nil || !reflect.DeepEqual(c, Config{}) || bytes.Contains([]byte(err.Error()), []byte(canary)) {
-			t.Fatal("malformed YAML must return zero config without token bytes")
+			t.Fatal("malformed .env must return zero config without token bytes")
 		}
 	}
 }

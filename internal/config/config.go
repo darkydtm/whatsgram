@@ -3,48 +3,48 @@ package config
 import "time"
 
 type Config struct {
-	Telegram Telegram `yaml:"telegram"`
-	WhatsApp WhatsApp `yaml:"whatsapp"`
-	Database Database `yaml:"database"`
-	Media    Media    `yaml:"media"`
-	Runtime  Runtime  `yaml:"runtime"`
+	Telegram Telegram
+	WhatsApp WhatsApp
+	Database Database
+	Media    Media
+	Runtime  Runtime
 }
 
 type Telegram struct {
-	Token          Secret  `yaml:"token" json:"-"`
-	ChatID         int64   `yaml:"chat_id"`
-	AllowedUserIDs []int64 `yaml:"allowed_user_ids"`
-	Endpoint       string  `yaml:"endpoint"`
-	LocalAPI       bool    `yaml:"local_api"`
+	Token          Secret `json:"-"`
+	ChatID         int64
+	AllowedUserIDs []int64
+	Endpoint       string
+	LocalAPI       bool
 }
 
 type WhatsApp struct {
-	PairingMode   string `yaml:"pairing_mode"`
-	Phone         string `yaml:"phone"`
-	HistoryPolicy string `yaml:"history_policy"`
+	PairingMode   string
+	Phone         string
+	HistoryPolicy string
 }
 
 type Database struct {
-	Path        string        `yaml:"path"`
-	BusyTimeout time.Duration `yaml:"busy_timeout"`
+	Path        string
+	BusyTimeout time.Duration
 }
 
 type Media struct {
-	TempDir     string        `yaml:"temp_dir"`
-	FFmpeg      string        `yaml:"ffmpeg"`
-	MaxBytes    int64         `yaml:"max_bytes"`
-	MaxDuration time.Duration `yaml:"max_duration"`
-	Timeout     time.Duration `yaml:"timeout"`
-	Workers     int           `yaml:"workers"`
+	TempDir     string
+	FFmpeg      string
+	MaxBytes    int64
+	MaxDuration time.Duration
+	Timeout     time.Duration
+	Workers     int
 }
 
 type Runtime struct {
-	QueueCapacity    int           `yaml:"queue_capacity"`
-	OperationTimeout time.Duration `yaml:"operation_timeout"`
-	MaxAttempts      int           `yaml:"max_attempts"`
-	RetryBase        time.Duration `yaml:"retry_base"`
-	RetryMax         time.Duration `yaml:"retry_max"`
-	ShutdownTimeout  time.Duration `yaml:"shutdown_timeout"`
+	QueueCapacity    int
+	OperationTimeout time.Duration
+	MaxAttempts      int
+	RetryBase        time.Duration
+	RetryMax         time.Duration
+	ShutdownTimeout  time.Duration
 }
 
 func Default() Config {
