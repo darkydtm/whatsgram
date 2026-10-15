@@ -1,0 +1,21 @@
+services:
+  whatsgram:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: whatsgram:latest
+    container_name: whatsgram
+    restart: unless-stopped
+    stop_grace_period: 30s
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - WHATSGRAM_TELEGRAM_TOKEN
+      - WHATSGRAM_TELEGRAM_CHAT_ID
+      - WHATSGRAM_TELEGRAM_ALLOWED_USER_IDS
+      - WHATSGRAM_DATABASE_PATH=/data/whatsgram.db
+      - TZ=UTC
+    volumes:
+      - ./data:/data
+      - ./config.yaml:/data/config.yaml:ro
