@@ -34,9 +34,13 @@ func (c *Coordinator) EnsureTopic(ctx context.Context, waJID string, titleHint s
 			title = groupMeta.Name
 		}
 	} else {
-		if title == "" {
-			contactMeta, _ = c.waPort.GetContactMeta(ctx, waJID)
+		contactMeta, _ = c.waPort.GetContactMeta(ctx, waJID)
+		if contactMeta.Name != "" {
 			title = contactMeta.Name
+		} else if title != "" && title != waJID && !strings.Contains(title, "@") {
+			// Title already provided as non-JID hint
+		} else if contactMeta.Phone != "" {
+			title = contactMeta.Phone
 		}
 	}
 
@@ -83,9 +87,12 @@ func (c *Coordinator) EnsureTopic(ctx context.Context, waJID string, titleHint s
 }
 
 func (c *Coordinator) buildContactMetaCard(ctx context.Context, waJID string, meta domain.ContactMeta) domain.TextContent {
-	if meta.Name == "" || meta.Phone == "" {
+	if meta.Name == "" || meta.Phone == "" || meta.JID == "" {
 		m, err := c.waPort.GetContactMeta(ctx, waJID)
 		if err == nil {
+			if meta.JID == "" {
+				meta.JID = m.JID
+			}
 			if meta.Name == "" {
 				meta.Name = m.Name
 			}
@@ -94,19 +101,25 @@ func (c *Coordinator) buildContactMetaCard(ctx context.Context, waJID string, me
 			}
 		}
 	}
-	if meta.Name == "" {
-		meta.Name = waJID
+	if meta.JID == "" {
+		meta.JID = waJID
 	}
-	if meta.Phone == "" {
-		meta.Phone = "не указан"
+	name := meta.Name
+	if name == "" {
+		name = "не указано"
+	}
+	phone := meta.Phone
+	if phone == "" {
+		phone = "не указан"
 	}
 
 	commonGroups, _ := c.waPort.GetCommonGroups(ctx, waJID)
 
 	var sb strings.Builder
 	sb.WriteString("👤 Справка контакта:\n")
-	sb.WriteString("Имя: " + meta.Name + "\n")
-	sb.WriteString("Номер: " + meta.Phone + "\n")
+	sb.WriteString("ID: " + meta.JID + "\n")
+	sb.WriteString("Номер: " + phone + "\n")
+	sb.WriteString("Имя: " + name + "\n")
 	sb.WriteString("Общие группы:")
 
 	var entities []domain.TextEntity
@@ -143,9 +156,12 @@ func (c *Coordinator) buildContactMetaCard(ctx context.Context, waJID string, me
 }
 
 func (c *Coordinator) buildGroupMetaCard(ctx context.Context, waJID string, meta domain.GroupMeta) domain.TextContent {
-	if meta.Name == "" || len(meta.Participants) == 0 {
+	if meta.Name == "" || len(meta.Participants) == 0 || meta.JID == "" {
 		m, err := c.waPort.GetGroupMeta(ctx, waJID)
 		if err == nil {
+			if meta.JID == "" {
+				meta.JID = m.JID
+			}
 			if meta.Name == "" {
 				meta.Name = m.Name
 			}
@@ -154,13 +170,18 @@ func (c *Coordinator) buildGroupMetaCard(ctx context.Context, waJID string, meta
 			}
 		}
 	}
-	if meta.Name == "" {
-		meta.Name = waJID
+	if meta.JID == "" {
+		meta.JID = waJID
+	}
+	name := meta.Name
+	if name == "" {
+		name = waJID
 	}
 
 	var sb strings.Builder
 	sb.WriteString("👥 Справка группы:\n")
-	sb.WriteString("Название: " + meta.Name + "\n")
+	sb.WriteString("ID: " + meta.JID + "\n")
+	sb.WriteString("Название: " + name + "\n")
 	sb.WriteString("Участники:")
 
 	var entities []domain.TextEntity
@@ -173,7 +194,11 @@ func (c *Coordinator) buildGroupMetaCard(ctx context.Context, waJID string, meta
 			start := len(utf16.Encode([]rune(sb.String())))
 			pName := p.Name
 			if pName == "" {
-				pName = p.JID
+				if p.Phone != "" {
+					pName = p.Phone
+				} else {
+					pName = p.JID
+				}
 			}
 			sb.WriteString(pName)
 			length := len(utf16.Encode([]rune(pName)))
@@ -182,11 +207,6 @@ func (c *Coordinator) buildGroupMetaCard(ctx context.Context, waJID string, meta
 			chat, err := c.store.Chat(ctx, p.JID)
 			if err == nil && chat.Topic != nil {
 				topicURL = chat.Topic.URL()
-			} else {
-				topicRef, err := c.EnsureTopic(ctx, p.JID, pName)
-				if err == nil {
-					topicURL = topicRef.URL()
-				}
 			}
 			if topicURL != "" {
 				entities = append(entities, domain.TextEntity{

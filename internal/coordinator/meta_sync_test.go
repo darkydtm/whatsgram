@@ -69,6 +69,9 @@ func TestMetaSyncDirectContactTopicAndCard(t *testing.T) {
 		t.Fatalf("contact meta-card message not sent to topic %d", contactTopic.ThreadID)
 	}
 
+	if !strings.Contains(contactCard.Content.Text, "ID: 15551234567@s.whatsapp.net") {
+		t.Errorf("expected ID in card, got: %s", contactCard.Content.Text)
+	}
 	if !strings.Contains(contactCard.Content.Text, "Имя: Alice Smith") {
 		t.Errorf("expected contact name in card, got: %s", contactCard.Content.Text)
 	}
@@ -115,6 +118,11 @@ func TestMetaSyncGroupTopicAndCard(t *testing.T) {
 		},
 	}
 
+	aliceTopic, err := coord.EnsureTopic(ctx, aliceJID, "Alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	groupTopic, err := coord.EnsureTopic(ctx, groupJID, "Family")
 	if err != nil {
 		t.Fatalf("EnsureTopic group failed: %v", err)
@@ -132,6 +140,9 @@ func TestMetaSyncGroupTopicAndCard(t *testing.T) {
 		t.Fatalf("group meta-card not sent")
 	}
 
+	if !strings.Contains(groupCard.Content.Text, "ID: "+groupJID) {
+		t.Errorf("expected group ID in card, got: %s", groupCard.Content.Text)
+	}
 	if !strings.Contains(groupCard.Content.Text, "Название: Family") {
 		t.Errorf("expected group name in card, got: %s", groupCard.Content.Text)
 	}
@@ -139,8 +150,9 @@ func TestMetaSyncGroupTopicAndCard(t *testing.T) {
 		t.Errorf("expected participants in card, got: %s", groupCard.Content.Text)
 	}
 
-	if len(groupCard.Content.Entities) < 2 {
-		t.Fatalf("expected at least 2 text_link entities in group card, got: %+v", groupCard.Content.Entities)
+	// Alice had an existing topic, so she should have a link. Bob had none, so no recursive topic was created.
+	if len(groupCard.Content.Entities) != 1 || groupCard.Content.Entities[0].URL != aliceTopic.URL() {
+		t.Fatalf("expected 1 text_link entity pointing to Alice topic, got: %+v", groupCard.Content.Entities)
 	}
 }
 
@@ -297,5 +309,96 @@ func TestSyncCommandWithMetadata(t *testing.T) {
 	}
 	if chatContact.Title != "Emma" {
 		t.Errorf("expected contact title 'Emma', got %q", chatContact.Title)
+	}
+}
+
+func TestContactTopicNamingPriorityAndFieldIsolation(t *testing.T) {
+	coord, st, tgPort, waPort, _ := setupTestEnvironment(t)
+	ctx := context.Background()
+	waPort.contacts = make(map[string]domain.ContactMeta)
+
+	// 1. Contact with Name and Phone
+	namedJID := "15551111111@s.whatsapp.net"
+	waPort.contacts[namedJID] = domain.ContactMeta{
+		JID:   namedJID,
+		Name:  "Dmitry",
+		Phone: "+15551111111",
+	}
+	namedTopic, err := coord.EnsureTopic(ctx, namedJID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ch1, _ := st.Chat(ctx, namedJID)
+	if ch1.Title != "Dmitry" {
+		t.Errorf("expected title 'Dmitry', got %q", ch1.Title)
+	}
+
+	// 2. Contact without Name, with Phone
+	phoneOnlyJID := "15552222222@s.whatsapp.net"
+	waPort.contacts[phoneOnlyJID] = domain.ContactMeta{
+		JID:   phoneOnlyJID,
+		Name:  "",
+		Phone: "+15552222222",
+	}
+	phoneTopic, err := coord.EnsureTopic(ctx, phoneOnlyJID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ch2, _ := st.Chat(ctx, phoneOnlyJID)
+	if ch2.Title != "+15552222222" {
+		t.Errorf("expected title '+15552222222', got %q", ch2.Title)
+	}
+
+	// 3. Contact without Name and without Phone (e.g. raw JID)
+	bareJID := "15553333333@lid"
+	waPort.contacts[bareJID] = domain.ContactMeta{
+		JID:   bareJID,
+		Name:  "",
+		Phone: "",
+	}
+	bareTopic, err := coord.EnsureTopic(ctx, bareJID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ch3, _ := st.Chat(ctx, bareJID)
+	if ch3.Title != bareJID {
+		t.Errorf("expected title %q, got %q", bareJID, ch3.Title)
+	}
+
+	// Verify meta-cards have proper fields
+	for _, req := range tgPort.sentRequests {
+		if req.TelegramTopic.ThreadID == phoneTopic.ThreadID {
+			if !strings.Contains(req.Content.Text, "ID: "+phoneOnlyJID) {
+				t.Errorf("expected ID in phone-only card, got: %s", req.Content.Text)
+			}
+			if !strings.Contains(req.Content.Text, "Номер: +15552222222") {
+				t.Errorf("expected Phone in phone-only card, got: %s", req.Content.Text)
+			}
+			if !strings.Contains(req.Content.Text, "Имя: не указано") {
+				t.Errorf("expected 'Имя: не указано' in card, got: %s", req.Content.Text)
+			}
+		}
+		if req.TelegramTopic.ThreadID == bareTopic.ThreadID {
+			if !strings.Contains(req.Content.Text, "ID: "+bareJID) {
+				t.Errorf("expected ID in bare card, got: %s", req.Content.Text)
+			}
+			if !strings.Contains(req.Content.Text, "Номер: не указан") {
+				t.Errorf("expected 'Номер: не указан' in bare card, got: %s", req.Content.Text)
+			}
+			if !strings.Contains(req.Content.Text, "Имя: не указано") {
+				t.Errorf("expected 'Имя: не указано' in bare card, got: %s", req.Content.Text)
+			}
+		}
+		if req.TelegramTopic.ThreadID == namedTopic.ThreadID {
+			if !strings.Contains(req.Content.Text, "ID: "+namedJID) {
+				t.Errorf("expected ID in named card, got: %s", req.Content.Text)
+			}
+			if !strings.Contains(req.Content.Text, "Номер: +15551111111") {
+				t.Errorf("expected Phone in named card, got: %s", req.Content.Text)
+			}
+			if !strings.Contains(req.Content.Text, "Имя: Dmitry") {
+				t.Errorf("expected Name in named card, got: %s", req.Content.Text)
+			}
+		}
 	}
 }

@@ -131,7 +131,7 @@ func (c *Client) IsPaired() bool {
 	return !c.device.GetJID().IsEmpty() && !c.device.Deleted
 }
 
-func FormatContactName(info types.ContactInfo, jid types.JID) string {
+func ContactName(info types.ContactInfo) string {
 	if info.FullName != "" {
 		return info.FullName
 	}
@@ -141,13 +141,17 @@ func FormatContactName(info types.ContactInfo, jid types.JID) string {
 	if info.BusinessName != "" {
 		return info.BusinessName
 	}
+	return ""
+}
+
+func FormatContactName(info types.ContactInfo, jid types.JID) string {
+	if name := ContactName(info); name != "" {
+		return name
+	}
 	if info.PushName != "" {
 		return info.PushName
 	}
-	if jid.User != "" {
-		return "+" + jid.User
-	}
-	return jid.String()
+	return ""
 }
 
 func FormatContactPhone(info types.ContactInfo, jid types.JID) string {
@@ -158,6 +162,16 @@ func FormatContactPhone(info types.ContactInfo, jid types.JID) string {
 		return "+" + jid.User
 	}
 	return ""
+}
+
+func FormatContactTitle(info types.ContactInfo, jid types.JID) string {
+	if name := ContactName(info); name != "" {
+		return name
+	}
+	if phone := FormatContactPhone(info, jid); phone != "" {
+		return phone
+	}
+	return jid.ToNonAD().String()
 }
 
 func (c *Client) DiscoverChats(ctx context.Context) ([]domain.ChatCandidate, error) {
@@ -201,7 +215,7 @@ func (c *Client) DiscoverChats(ctx context.Context) ([]domain.ChatCandidate, err
 						seen[jidStr] = true
 						candidates = append(candidates, domain.ChatCandidate{
 							WhatsAppJID:    jidStr,
-							Title:          FormatContactName(info, jid),
+							Title:          FormatContactTitle(info, jid),
 							Source:         "contact",
 							HistoryPartial: false,
 						})
@@ -232,7 +246,7 @@ func (c *Client) DiscoverChats(ctx context.Context) ([]domain.ChatCandidate, err
 				}
 				name := p.DisplayName
 				if name == "" {
-					name = FormatContactName(info, pJID)
+					name = FormatContactTitle(info, pJID)
 				}
 				candidates = append(candidates, domain.ChatCandidate{
 					WhatsAppJID:    jidStr,
