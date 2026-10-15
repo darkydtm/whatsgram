@@ -291,6 +291,24 @@ func (f *fakeWhatsAppPort) LastSentRequest() domain.SendTextRequest {
 	return f.sentRequests[len(f.sentRequests)-1]
 }
 
+func (f *fakeWhatsAppPort) GetContactMeta(ctx context.Context, jid string) (domain.ContactMeta, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return domain.ContactMeta{JID: jid, Name: jid, Phone: "+" + jid}, nil
+}
+
+func (f *fakeWhatsAppPort) GetGroupMeta(ctx context.Context, jid string) (domain.GroupMeta, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return domain.GroupMeta{JID: jid, Name: jid}, nil
+}
+
+func (f *fakeWhatsAppPort) GetCommonGroups(ctx context.Context, jid string) ([]domain.GroupMeta, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return nil, nil
+}
+
 type fakePairingPort struct {
 	mu       sync.Mutex
 	qrChan   chan domain.PairingNotice

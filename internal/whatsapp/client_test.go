@@ -72,6 +72,17 @@ func (f *fakeNetwork) GetJoinedGroups(context.Context) ([]*types.GroupInfo, erro
 	}
 	return f.groups, nil
 }
+func (f *fakeNetwork) GetGroupInfo(_ context.Context, jid types.JID) (*types.GroupInfo, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	for _, g := range f.groups {
+		if g != nil && g.JID.ToNonAD() == jid.ToNonAD() {
+			return g, nil
+		}
+	}
+	return nil, errors.New("group not found")
+}
 func (f *fakeNetwork) SendMessage(_ context.Context, to types.JID, m *waE2E.Message, extra ...whatsmeow.SendRequestExtra) (whatsmeow.SendResponse, error) {
 	f.sends++
 	f.to, f.message, f.extra = to, m, extra[0]
@@ -130,6 +141,11 @@ func TestDiscoverChats(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	userJID := types.NewJID("15551234567", types.DefaultUserServer)
+	if err := d.Contacts.PutContactName(context.Background(), userJID, "Alice", "Alice Smith"); err != nil {
+		t.Fatal(err)
+	}
+
 	groupJID := types.NewJID("120363000000000000", types.GroupServer)
 	fn := &fakeNetwork{
 		Client:    c.client,
@@ -138,6 +154,9 @@ func TestDiscoverChats(t *testing.T) {
 			{
 				JID:       groupJID,
 				GroupName: types.GroupName{Name: "Test Group"},
+				Participants: []types.GroupParticipant{
+					{JID: userJID},
+				},
 			},
 		},
 	}
@@ -146,7 +165,31 @@ func TestDiscoverChats(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(candidates) != 1 || candidates[0].WhatsAppJID != groupJID.String() || candidates[0].Title != "Test Group" || candidates[0].Source != "group" {
-		t.Fatalf("unexpected candidates: %+v", candidates)
+	if len(candidates) != 2 {
+		t.Fatalf("expected 2 candidates (group and contact), got %d: %+v", len(candidates), candidates)
+	}
+
+	contactMeta, err := c.GetContactMeta(context.Background(), userJID.String())
+	if err != nil {
+		t.Fatalf("GetContactMeta failed: %v", err)
+	}
+	if contactMeta.Name != "Alice Smith" || contactMeta.Phone != "+15551234567" {
+		t.Fatalf("unexpected contact meta: %+v", contactMeta)
+	}
+
+	commonGroups, err := c.GetCommonGroups(context.Background(), userJID.String())
+	if err != nil {
+		t.Fatalf("GetCommonGroups failed: %v", err)
+	}
+	if len(commonGroups) != 1 || commonGroups[0].Name != "Test Group" {
+		t.Fatalf("unexpected common groups: %+v", commonGroups)
+	}
+
+	groupMeta, err := c.GetGroupMeta(context.Background(), groupJID.String())
+	if err != nil {
+		t.Fatalf("GetGroupMeta failed: %v", err)
+	}
+	if groupMeta.Name != "Test Group" || len(groupMeta.Participants) != 1 || groupMeta.Participants[0].Name != "Alice Smith" {
+		t.Fatalf("unexpected group meta: %+v", groupMeta)
 	}
 }

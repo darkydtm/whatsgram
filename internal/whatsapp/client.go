@@ -38,6 +38,7 @@ type networkClient interface {
 	GetQRChannel(context.Context) (<-chan whatsmeow.QRChannelItem, error)
 	PairPhone(context.Context, string, bool, whatsmeow.PairClientType, string) (string, error)
 	GetJoinedGroups(context.Context) ([]*types.GroupInfo, error)
+	GetGroupInfo(context.Context, types.JID) (*types.GroupInfo, error)
 }
 
 type Client struct {
@@ -130,6 +131,35 @@ func (c *Client) IsPaired() bool {
 	return !c.device.GetJID().IsEmpty() && !c.device.Deleted
 }
 
+func FormatContactName(info types.ContactInfo, jid types.JID) string {
+	if info.FullName != "" {
+		return info.FullName
+	}
+	if info.FirstName != "" {
+		return info.FirstName
+	}
+	if info.BusinessName != "" {
+		return info.BusinessName
+	}
+	if info.PushName != "" {
+		return info.PushName
+	}
+	if jid.User != "" {
+		return "+" + jid.User
+	}
+	return jid.String()
+}
+
+func FormatContactPhone(info types.ContactInfo, jid types.JID) string {
+	if info.RedactedPhone != "" {
+		return info.RedactedPhone
+	}
+	if jid.User != "" {
+		return "+" + jid.User
+	}
+	return ""
+}
+
 func (c *Client) DiscoverChats(ctx context.Context) ([]domain.ChatCandidate, error) {
 	if ctx == nil {
 		return nil, adapterError(domain.Permanent, "invalid_target")
@@ -141,22 +171,188 @@ func (c *Client) DiscoverChats(ctx context.Context) ([]domain.ChatCandidate, err
 	}
 	c.mu.Unlock()
 
+	candidates := make([]domain.ChatCandidate, 0)
+	seen := make(map[string]bool)
+
 	groups, err := c.network.GetJoinedGroups(ctx)
 	if err != nil {
 		return nil, adapterError(domain.Transient, "not_connected")
 	}
-	candidates := make([]domain.ChatCandidate, 0, len(groups))
 	for _, g := range groups {
 		if g != nil && !g.JID.IsEmpty() {
+			jidStr := g.JID.ToNonAD().String()
+			seen[jidStr] = true
 			candidates = append(candidates, domain.ChatCandidate{
-				WhatsAppJID:    g.JID.ToNonAD().String(),
+				WhatsAppJID:    jidStr,
 				Title:          g.Name,
 				Source:         "group",
 				HistoryPartial: false,
 			})
 		}
 	}
+
+	if c.device != nil && c.device.Contacts != nil {
+		contacts, err := c.device.Contacts.GetAllContacts(ctx)
+		if err == nil {
+			for jid, info := range contacts {
+				if jid.Server == types.DefaultUserServer || jid.Server == types.HiddenUserServer {
+					jidStr := jid.ToNonAD().String()
+					if !seen[jidStr] {
+						seen[jidStr] = true
+						candidates = append(candidates, domain.ChatCandidate{
+							WhatsAppJID:    jidStr,
+							Title:          FormatContactName(info, jid),
+							Source:         "contact",
+							HistoryPartial: false,
+						})
+					}
+				}
+			}
+		}
+	}
+
+	for _, g := range groups {
+		if g == nil {
+			continue
+		}
+		for _, p := range g.Participants {
+			pJID := p.JID
+			if pJID.IsEmpty() {
+				pJID = p.PhoneNumber
+			}
+			if pJID.IsEmpty() {
+				continue
+			}
+			jidStr := pJID.ToNonAD().String()
+			if !seen[jidStr] {
+				seen[jidStr] = true
+				var info types.ContactInfo
+				if c.device != nil && c.device.Contacts != nil {
+					info, _ = c.device.Contacts.GetContact(ctx, pJID)
+				}
+				name := p.DisplayName
+				if name == "" {
+					name = FormatContactName(info, pJID)
+				}
+				candidates = append(candidates, domain.ChatCandidate{
+					WhatsAppJID:    jidStr,
+					Title:          name,
+					Source:         "contact",
+					HistoryPartial: false,
+				})
+			}
+		}
+	}
+
 	return candidates, nil
+}
+
+func (c *Client) GetContactMeta(ctx context.Context, jidStr string) (domain.ContactMeta, error) {
+	if ctx == nil {
+		return domain.ContactMeta{}, adapterError(domain.Permanent, "invalid_target")
+	}
+	parsed, err := parseChat(jidStr)
+	if err != nil {
+		return domain.ContactMeta{}, err
+	}
+	var info types.ContactInfo
+	if c.device != nil && c.device.Contacts != nil {
+		info, _ = c.device.Contacts.GetContact(ctx, parsed)
+	}
+	return domain.ContactMeta{
+		JID:   parsed.ToNonAD().String(),
+		Name:  FormatContactName(info, parsed),
+		Phone: FormatContactPhone(info, parsed),
+	}, nil
+}
+
+func (c *Client) GetCommonGroups(ctx context.Context, jidStr string) ([]domain.GroupMeta, error) {
+	if ctx == nil {
+		return nil, adapterError(domain.Permanent, "invalid_target")
+	}
+	parsed, err := parseChat(jidStr)
+	if err != nil {
+		return nil, err
+	}
+	groups, err := c.network.GetJoinedGroups(ctx)
+	if err != nil {
+		return nil, adapterError(domain.Transient, "not_connected")
+	}
+	userNonAD := parsed.ToNonAD().String()
+	userVal := parsed.User
+	var res []domain.GroupMeta
+	for _, g := range groups {
+		if g == nil {
+			continue
+		}
+		for _, p := range g.Participants {
+			pNonAD := p.JID.ToNonAD().String()
+			phoneNonAD := p.PhoneNumber.ToNonAD().String()
+			lidNonAD := p.LID.ToNonAD().String()
+			if pNonAD == userNonAD || phoneNonAD == userNonAD || lidNonAD == userNonAD || (userVal != "" && (p.JID.User == userVal || p.PhoneNumber.User == userVal)) {
+				res = append(res, domain.GroupMeta{
+					JID:  g.JID.ToNonAD().String(),
+					Name: g.Name,
+				})
+				break
+			}
+		}
+	}
+	return res, nil
+}
+
+func (c *Client) GetGroupMeta(ctx context.Context, jidStr string) (domain.GroupMeta, error) {
+	if ctx == nil {
+		return domain.GroupMeta{}, adapterError(domain.Permanent, "invalid_target")
+	}
+	parsed, err := parseChat(jidStr)
+	if err != nil {
+		return domain.GroupMeta{}, err
+	}
+	groups, err := c.network.GetJoinedGroups(ctx)
+	if err != nil {
+		return domain.GroupMeta{}, adapterError(domain.Transient, "not_connected")
+	}
+	var target *types.GroupInfo
+	for _, g := range groups {
+		if g != nil && g.JID.ToNonAD() == parsed.ToNonAD() {
+			target = g
+			break
+		}
+	}
+	if target == nil {
+		target, err = c.network.GetGroupInfo(ctx, parsed)
+		if err != nil {
+			return domain.GroupMeta{}, adapterError(domain.Permanent, "invalid_target")
+		}
+	}
+	meta := domain.GroupMeta{
+		JID:  target.JID.ToNonAD().String(),
+		Name: target.Name,
+	}
+	for _, p := range target.Participants {
+		pJID := p.JID
+		if pJID.IsEmpty() {
+			pJID = p.PhoneNumber
+		}
+		if pJID.IsEmpty() {
+			continue
+		}
+		var info types.ContactInfo
+		if c.device != nil && c.device.Contacts != nil {
+			info, _ = c.device.Contacts.GetContact(ctx, pJID)
+		}
+		name := p.DisplayName
+		if name == "" {
+			name = FormatContactName(info, pJID)
+		}
+		meta.Participants = append(meta.Participants, domain.ContactMeta{
+			JID:   pJID.ToNonAD().String(),
+			Name:  name,
+			Phone: FormatContactPhone(info, pJID),
+		})
+	}
+	return meta, nil
 }
 
 func buildText(chat types.JID, content domain.TextContent) (*waE2E.Message, error) {

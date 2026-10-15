@@ -206,6 +206,16 @@ type ChatCandidate struct {
 	Source         string
 	HistoryPartial bool
 }
+type ContactMeta struct {
+	JID   string
+	Name  string
+	Phone string
+}
+type GroupMeta struct {
+	JID          string
+	Name         string
+	Participants []ContactMeta
+}
 type Admission struct {
 	Inserted bool
 	InboxID  int64
@@ -295,6 +305,9 @@ type WhatsAppPort interface {
 	EditOwnText(context.Context, MessageRef, TextContent, string) error
 	Revoke(context.Context, MessageRef, string) error
 	SetOwnReaction(context.Context, MessageRef, string, string) error
+	GetContactMeta(context.Context, string) (ContactMeta, error)
+	GetGroupMeta(context.Context, string) (GroupMeta, error)
+	GetCommonGroups(context.Context, string) ([]GroupMeta, error)
 }
 type PairingNotice struct {
 	Kind      string
