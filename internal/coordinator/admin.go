@@ -142,6 +142,14 @@ func (a *AdminExecutor) handleSync(ctx context.Context, in admin.Input) error {
 			continue
 		}
 
+		if synced > 0 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(300 * time.Millisecond):
+			}
+		}
+
 		_, err = a.coord.EnsureTopic(ctx, cand.WhatsAppJID, cand.Title)
 		if err != nil {
 			failed++

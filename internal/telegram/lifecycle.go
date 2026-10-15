@@ -62,7 +62,11 @@ func (c *Client) EditText(ctx context.Context, ref domain.MessageRef, content do
 		Text:      content.Text,
 		Entities:  toTelegramEntities(content.Entities),
 	}
+	if err := c.limiter.wait(ctx, false); err != nil {
+		return err
+	}
 	_, err = c.api.EditMessageText(ctx, params)
+	c.limiter.recordError(err)
 	return classify(ctx, err, true)
 }
 
@@ -71,7 +75,11 @@ func (c *Client) Delete(ctx context.Context, ref domain.MessageRef) error {
 	if err != nil {
 		return err
 	}
+	if err := c.limiter.wait(ctx, false); err != nil {
+		return err
+	}
 	ok, err := c.api.DeleteMessage(ctx, &bot.DeleteMessageParams{ChatID: chat, MessageID: message})
+	c.limiter.recordError(err)
 	if err == nil && !ok {
 		return adapterError(domain.Uncertain, "uncertain")
 	}
@@ -90,7 +98,11 @@ func (c *Client) SetOwnReaction(ctx context.Context, ref domain.MessageRef, emoj
 	if emoji != "" {
 		reaction = append(reaction, models.ReactionType{Type: models.ReactionTypeTypeEmoji, ReactionTypeEmoji: &models.ReactionTypeEmoji{Emoji: emoji}})
 	}
+	if err := c.limiter.wait(ctx, false); err != nil {
+		return err
+	}
 	ok, err := c.api.SetMessageReaction(ctx, &bot.SetMessageReactionParams{ChatID: chat, MessageID: message, Reaction: reaction, IsBig: bot.False()})
+	c.limiter.recordError(err)
 	if err == nil && !ok {
 		return adapterError(domain.Uncertain, "uncertain")
 	}
@@ -111,7 +123,11 @@ func (c *Client) CreateTopic(ctx context.Context, chatID int64, name string) (do
 	if err := c.Initialize(ctx); err != nil {
 		return domain.TopicRef{}, err
 	}
+	if err := c.limiter.wait(ctx, true); err != nil {
+		return domain.TopicRef{}, err
+	}
 	topic, err := c.api.CreateForumTopic(ctx, &bot.CreateForumTopicParams{ChatID: chatID, Name: name})
+	c.limiter.recordError(err)
 	if err != nil {
 		return domain.TopicRef{}, classify(ctx, err, true)
 	}
@@ -131,7 +147,11 @@ func (c *Client) RenameTopic(ctx context.Context, topic domain.TopicRef, name st
 	if err := c.Initialize(ctx); err != nil {
 		return err
 	}
+	if err := c.limiter.wait(ctx, true); err != nil {
+		return err
+	}
 	ok, err := c.api.EditForumTopic(ctx, &bot.EditForumTopicParams{ChatID: topic.ChatID, MessageThreadID: int(topic.ThreadID), Name: name})
+	c.limiter.recordError(err)
 	if err == nil && !ok {
 		return adapterError(domain.Uncertain, "uncertain")
 	}

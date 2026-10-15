@@ -25,6 +25,7 @@ type Client struct {
 	api         *bot.Bot
 	http        *http.Client
 	logger      *slog.Logger
+	limiter     *rateLimiter
 	mu          sync.RWMutex
 	botID       int64
 	botUsername string
@@ -65,7 +66,7 @@ func New(cfg config.Telegram, client *http.Client, logger *slog.Logger) (*Client
 	if logger == nil {
 		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
-	c := &Client{cfg: cfg, http: &cloned, logger: logger}
+	c := &Client{cfg: cfg, http: &cloned, logger: logger, limiter: newRateLimiter(cfg.LocalAPI)}
 	c.api, err = bot.New(cfg.Token.Reveal(), bot.WithSkipGetMe(), bot.WithServerURL(cfg.Endpoint), bot.WithHTTPClient(20*time.Second, boundedClient{&cloned}), bot.WithErrorsHandler(func(error) {}), bot.WithDebugHandler(func(string, ...any) {}))
 	if err != nil {
 		return nil, adapterError(domain.Permanent, "invalid_target")
@@ -73,25 +74,37 @@ func New(cfg config.Telegram, client *http.Client, logger *slog.Logger) (*Client
 	return c, nil
 }
 
+func (c *Client) SetLimiterIntervals(minInterval, chatInterval time.Duration) {
+	if c.limiter != nil {
+		c.limiter.setIntervals(minInterval, chatInterval)
+	}
+}
+
 func (c *Client) Initialize(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.ready = false
+	_ = c.limiter.wait(ctx, false)
 	me, err := c.api.GetMe(ctx)
+	c.limiter.recordError(err)
 	if err != nil {
 		return classify(ctx, err, false)
 	}
 	if me == nil || !me.IsBot || me.ID <= 0 {
 		return adapterError(domain.Permanent, "invalid_target")
 	}
+	_ = c.limiter.wait(ctx, false)
 	chat, err := c.api.GetChat(ctx, &bot.GetChatParams{ChatID: c.cfg.ChatID})
+	c.limiter.recordError(err)
 	if err != nil {
 		return classify(ctx, err, false)
 	}
 	if chat == nil || chat.ID != c.cfg.ChatID || chat.Type != models.ChatTypeSupergroup || !chat.IsForum {
 		return adapterError(domain.Permission, "permission_denied")
 	}
+	_ = c.limiter.wait(ctx, false)
 	member, err := c.api.GetChatMember(ctx, &bot.GetChatMemberParams{ChatID: c.cfg.ChatID, UserID: me.ID})
+	c.limiter.recordError(err)
 	if err != nil {
 		return classify(ctx, err, false)
 	}
@@ -160,7 +173,11 @@ func (c *Client) SendText(ctx context.Context, request domain.SendTextRequest) (
 	if err := c.Initialize(ctx); err != nil {
 		return domain.SendResult{}, err
 	}
+	if err := c.limiter.wait(ctx, true); err != nil {
+		return domain.SendResult{}, err
+	}
 	message, err := c.api.SendMessage(ctx, params)
+	c.limiter.recordError(err)
 	if err != nil {
 		return domain.SendResult{}, classify(ctx, err, true)
 	}
@@ -199,7 +216,11 @@ func (c *Client) SendPhoto(ctx context.Context, request domain.SendPhotoRequest)
 	if err := c.Initialize(ctx); err != nil {
 		return domain.SendResult{}, err
 	}
+	if err := c.limiter.wait(ctx, true); err != nil {
+		return domain.SendResult{}, err
+	}
 	message, err := c.api.SendPhoto(ctx, params)
+	c.limiter.recordError(err)
 	if err != nil {
 		return domain.SendResult{}, classify(ctx, err, true)
 	}
