@@ -112,3 +112,14 @@ func TestNormalizePreservesAuthorizedNativeTextAndStableVersion(t *testing.T) {
 		t.Fatal("same-second different native update IDs must expose current domain conflict")
 	}
 }
+
+func TestNormalizePreservesTelegramThreadID(t *testing.T) {
+	raw := json.RawMessage(`{"update_id":101,"message":{"message_id":55,"message_thread_id":42,"date":100,"from":{"id":12},"chat":{"id":-10042},"text":"hello from topic"}}`)
+	e, err := Normalize(testConfig("http://fixture"), raw, "epoch")
+	if err != nil {
+		t.Fatalf("Normalize failed: %v", err)
+	}
+	if e.TelegramThreadID != 42 {
+		t.Fatalf("expected TelegramThreadID 42, got %d", e.TelegramThreadID)
+	}
+}

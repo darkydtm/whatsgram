@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"testing"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/darkydtm/whatsgram/internal/domain"
 	"github.com/darkydtm/whatsgram/internal/store"
+	"github.com/darkydtm/whatsgram/internal/telegram"
 	"github.com/go-telegram/bot/models"
 )
 
@@ -1098,5 +1100,48 @@ func TestScenario13_UnsupportedGracefulDegradation(t *testing.T) {
 	partsTG, err := st.FindParts(ctx, *tgDoc.Target)
 	if err != nil || len(partsTG) == 0 {
 		t.Fatalf("expected parts recorded in store for degraded tg media, err: %v, parts: %+v", err, partsTG)
+	}
+}
+
+func TestTelegramNormalizedTopicMessageDeliveredToWhatsApp(t *testing.T) {
+	coord, st, _, waPort, _ := setupTestEnvironment(t)
+	ctx := context.Background()
+
+	chatJID := "120363999@g.us"
+	waPort.groups = map[string]domain.GroupMeta{
+		chatJID: {JID: chatJID, Name: "Routing Test Group"},
+	}
+	topic, err := coord.EnsureTopic(ctx, chatJID, "Routing Test Group")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rawUpdate := fmt.Sprintf(`{"update_id":901,"message":{"message_id":333,"message_thread_id":%d,"date":1700000000,"from":{"id":42},"chat":{"id":%d},"text":"hello from telegram topic"}}`, topic.ThreadID, coord.cfg.Telegram.ChatID)
+	ev, err := telegram.Normalize(coord.cfg.Telegram, json.RawMessage(rawUpdate), "epoch1")
+	if err != nil {
+		t.Fatalf("Normalize failed: %v", err)
+	}
+	if ev.TelegramThreadID != topic.ThreadID {
+		t.Fatalf("expected ev.TelegramThreadID %d, got %d", topic.ThreadID, ev.TelegramThreadID)
+	}
+
+	if _, err := st.Accept(ctx, ev); err != nil {
+		t.Fatalf("Accept failed: %v", err)
+	}
+	if err := coord.StepInbox(ctx); err != nil {
+		t.Fatalf("StepInbox failed: %v", err)
+	}
+	if err := coord.StepDelivery(ctx); err != nil {
+		t.Fatalf("StepDelivery failed: %v", err)
+	}
+
+	if len(waPort.sentRequests) != 1 {
+		t.Fatalf("expected 1 sent request on WhatsApp, got %d", len(waPort.sentRequests))
+	}
+	if waPort.sentRequests[0].WhatsAppChat != chatJID {
+		t.Errorf("expected WhatsAppChat %s, got %s", chatJID, waPort.sentRequests[0].WhatsAppChat)
+	}
+	if waPort.sentRequests[0].Content.Text != "hello from telegram topic" {
+		t.Errorf("expected text 'hello from telegram topic', got %q", waPort.sentRequests[0].Content.Text)
 	}
 }

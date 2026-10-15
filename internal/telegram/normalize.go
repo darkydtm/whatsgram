@@ -55,6 +55,7 @@ func Normalize(cfg config.Telegram, raw json.RawMessage, epoch string) (domain.E
 		meta.UpdateType = field
 		meta.ThreadID = int64(message.MessageThreadID)
 		meta.MessageID = message.ID
+		e.TelegramThreadID = int64(message.MessageThreadID)
 		e.Chat = strconv.FormatInt(message.Chat.ID, 10)
 		if message.From != nil && message.From.ID > 0 {
 			e.Actor = strconv.FormatInt(message.From.ID, 10)

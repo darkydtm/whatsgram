@@ -81,6 +81,9 @@ func (c *Coordinator) handleTelegramEvent(ctx context.Context, e domain.Event, t
 		chatID = c.cfg.Telegram.ChatID
 	}
 	threadID := e.TelegramThreadID
+	if threadID == 0 {
+		threadID = in.ThreadID
+	}
 
 	chat, err := c.store.ChatByTopic(ctx, chatID, threadID)
 	if err != nil || chat.State != store.ChatActive || chat.WhatsAppJID == "" {
