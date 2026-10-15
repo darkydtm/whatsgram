@@ -349,7 +349,7 @@ func (c *Coordinator) handleTelegramEvent(ctx context.Context, e domain.Event, t
 	}
 
 	var timers []store.TimerSpec
-	if dur, ok := c.getChatTimer(chat.WhatsAppJID); ok && dur > 0 {
+	if dur, ok := c.getChatTimer(ctx, chat.WhatsAppJID); ok && dur > 0 {
 		timers = append(timers, store.TimerSpec{
 			Kind:     store.TimerExpire,
 			Version:  e.Version,
@@ -395,7 +395,7 @@ func (c *Coordinator) handleWhatsAppEvent(ctx context.Context, e domain.Event, t
 	case domain.ChatTimer:
 		if e.Text != nil && e.Text.Text != "" {
 			if dur, err := time.ParseDuration(e.Text.Text); err == nil {
-				c.setChatTimer(e.Chat, dur)
+				c.setChatTimer(ctx, e.Chat, dur)
 			}
 		}
 		return c.store.CompleteInbox(ctx, e.InboxID, token, now)
@@ -580,7 +580,7 @@ func (c *Coordinator) handleWhatsAppEvent(ctx context.Context, e domain.Event, t
 		}
 
 		var timers []store.TimerSpec
-		if dur, ok := c.getChatTimer(chat.WhatsAppJID); ok && dur > 0 {
+		if dur, ok := c.getChatTimer(ctx, chat.WhatsAppJID); ok && dur > 0 {
 			timers = append(timers, store.TimerSpec{
 				Kind:     store.TimerExpire,
 				Version:  e.Version,

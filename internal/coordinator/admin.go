@@ -211,19 +211,32 @@ func (a *AdminExecutor) handlePin(ctx context.Context, cmd admin.ParsedCommand, 
 	if err != nil || len(parts) == 0 {
 		return a.coord.reply(ctx, in, "Message not found or not tracked by bridge.")
 	}
+	originAuthorID, _ := strconv.ParseInt(parts[0].Ref.Author, 10, 64)
+	isDriver := a.coord.policy.CanDriveAccount(in.UserID)
+	if !a.coord.policy.CanMutateOriginal(in.UserID, originAuthorID, isDriver) {
+		return a.coord.reply(ctx, in, "Permission denied: you cannot pin this message.")
+	}
 	return a.coord.reply(ctx, in, "📌 Message pinned.")
 }
 
 func (a *AdminExecutor) handleUnpin(ctx context.Context, cmd admin.ParsedCommand, in admin.Input, e domain.Event) error {
+	isDriver := a.coord.policy.CanDriveAccount(in.UserID)
+	if !isDriver {
+		return a.coord.reply(ctx, in, "Permission denied: you cannot unpin messages.")
+	}
 	return a.coord.reply(ctx, in, "📌 Message unpinned.")
 }
 
 func (a *AdminExecutor) handleTimer(ctx context.Context, cmd admin.ParsedCommand, in admin.Input) error {
+	isDriver := a.coord.policy.CanDriveAccount(in.UserID)
+	if !isDriver {
+		return a.coord.reply(ctx, in, "Permission denied: only account driver can set chat timers.")
+	}
 	chat, err := a.coord.store.ChatByTopic(ctx, in.ChatID, in.ThreadID)
 	if err != nil {
 		return a.coord.reply(ctx, in, "Topic is not bound to a WhatsApp chat.")
 	}
-	a.coord.setChatTimer(chat.WhatsAppJID, cmd.Timer)
+	a.coord.setChatTimer(ctx, chat.WhatsAppJID, cmd.Timer)
 	if cmd.Timer > 0 {
 		return a.coord.reply(ctx, in, fmt.Sprintf("⏱ Ephemeral messages enabled: %s", cmd.Timer))
 	}
@@ -231,6 +244,10 @@ func (a *AdminExecutor) handleTimer(ctx context.Context, cmd admin.ParsedCommand
 }
 
 func (a *AdminExecutor) handleRename(ctx context.Context, cmd admin.ParsedCommand, in admin.Input) error {
+	isDriver := a.coord.policy.CanDriveAccount(in.UserID)
+	if !isDriver {
+		return a.coord.reply(ctx, in, "Permission denied: only account driver can rename chats.")
+	}
 	chat, err := a.coord.store.ChatByTopic(ctx, in.ChatID, in.ThreadID)
 	if err != nil {
 		return a.coord.reply(ctx, in, "Topic is not bound to a WhatsApp chat.")
@@ -239,6 +256,7 @@ func (a *AdminExecutor) handleRename(ctx context.Context, cmd admin.ParsedComman
 	if newName == "" {
 		return a.coord.reply(ctx, in, "New name cannot be empty.")
 	}
+	_ = a.coord.store.SetChatTitle(ctx, chat.WhatsAppJID, newName)
 	if chat.Topic != nil {
 		_ = a.coord.tgPort.RenameTopic(ctx, *chat.Topic, newName)
 	}

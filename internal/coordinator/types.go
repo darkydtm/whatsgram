@@ -32,6 +32,9 @@ type Store interface {
 	PlanEventWithTimers(ctx context.Context, e domain.Event, token string, deliveries []domain.Delivery, timers []store.TimerSpec, now time.Time) error
 	ClaimTimer(ctx context.Context, now time.Time, ttl time.Duration) (store.Timer, error)
 	CompleteTimer(ctx context.Context, id int64, token string, deliveries []domain.Delivery, now time.Time) error
+	SetChatTitle(ctx context.Context, waJID string, title string) error
+	SetChatTimer(ctx context.Context, waJID string, d time.Duration) error
+	GetChatTimer(ctx context.Context, waJID string) (time.Duration, error)
 }
 
 type Options struct {

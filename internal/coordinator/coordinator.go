@@ -202,17 +202,23 @@ func (c *Coordinator) runLeaseRecoveryLoop(ctx context.Context) {
 	}
 }
 
-func (c *Coordinator) setChatTimer(jid string, d time.Duration) {
+func (c *Coordinator) setChatTimer(ctx context.Context, jid string, d time.Duration) {
 	c.chatTimers.Store(jid, d)
+	_ = c.store.SetChatTimer(ctx, jid, d)
 }
 
-func (c *Coordinator) getChatTimer(jid string) (time.Duration, bool) {
-	val, ok := c.chatTimers.Load(jid)
-	if !ok {
-		return 0, false
+func (c *Coordinator) getChatTimer(ctx context.Context, jid string) (time.Duration, bool) {
+	if val, ok := c.chatTimers.Load(jid); ok {
+		if d, ok := val.(time.Duration); ok {
+			return d, true
+		}
 	}
-	d, ok := val.(time.Duration)
-	return d, ok
+	d, err := c.store.GetChatTimer(ctx, jid)
+	if err == nil && d > 0 {
+		c.chatTimers.Store(jid, d)
+		return d, true
+	}
+	return 0, false
 }
 
 func (c *Coordinator) RunTimerLoop(ctx context.Context) error {
@@ -247,9 +253,6 @@ func (c *Coordinator) StepTimer(ctx context.Context) error {
 	var deliveries []domain.Delivery
 	if timer.Kind == store.TimerExpire {
 		for _, part := range timer.Parts {
-			if part.Ref.Platform == domain.Telegram && !part.Deleted {
-				_ = c.tgPort.Delete(ctx, part.Ref)
-			}
 			if part.BridgeOwned && !part.Deleted && !part.Retired {
 				capability := domain.CanRevoke
 				if part.Ref.Platform == domain.Telegram {
