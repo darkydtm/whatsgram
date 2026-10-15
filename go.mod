@@ -38,5 +38,4 @@ require (
 require (
 	github.com/go-telegram/bot v1.27.0
 	github.com/rs/zerolog v1.35.1
-	go.yaml.in/yaml/v3 v3.0.5
 )
