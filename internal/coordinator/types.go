@@ -29,6 +29,9 @@ type Store interface {
 	Message(ctx context.Context, ref domain.MessageRef) (store.MessageState, error)
 	FindPartsByRemote(ctx context.Context, platform domain.Platform, chat, id string) ([]domain.DeliveredPart, error)
 	TombstoneMessage(ctx context.Context, messageID int64) error
+	PlanEventWithTimers(ctx context.Context, e domain.Event, token string, deliveries []domain.Delivery, timers []store.TimerSpec, now time.Time) error
+	ClaimTimer(ctx context.Context, now time.Time, ttl time.Duration) (store.Timer, error)
+	CompleteTimer(ctx context.Context, id int64, token string, deliveries []domain.Delivery, now time.Time) error
 }
 
 type Options struct {

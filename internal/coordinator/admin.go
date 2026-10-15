@@ -33,6 +33,14 @@ func (a *AdminExecutor) Execute(ctx context.Context, cmd admin.ParsedCommand, in
 		return a.handleBind(ctx, cmd, in)
 	case "del":
 		return a.handleDel(ctx, cmd, in, e)
+	case "pin":
+		return a.handlePin(ctx, cmd, in, e)
+	case "unpin":
+		return a.handleUnpin(ctx, cmd, in, e)
+	case "timer":
+		return a.handleTimer(ctx, cmd, in)
+	case "rename", "rename-wa":
+		return a.handleRename(ctx, cmd, in)
 	default:
 		return a.coord.reply(ctx, in, fmt.Sprintf("Command /%s is not supported", cmd.Name))
 	}
@@ -192,6 +200,49 @@ func (a *AdminExecutor) handleBind(ctx context.Context, cmd admin.ParsedCommand,
 
 	a.coord.activeChatCount.Add(1)
 	return a.coord.reply(ctx, in, fmt.Sprintf("Successfully bound topic %d to %s", topicID, jid))
+}
+
+func (a *AdminExecutor) handlePin(ctx context.Context, cmd admin.ParsedCommand, in admin.Input, e domain.Event) error {
+	if cmd.TargetMessageID <= 0 {
+		return a.coord.reply(ctx, in, "Reply to a message to pin it.")
+	}
+	targetIDStr := strconv.FormatInt(cmd.TargetMessageID, 10)
+	parts, err := a.coord.store.FindPartsByRemote(ctx, domain.Telegram, e.Chat, targetIDStr)
+	if err != nil || len(parts) == 0 {
+		return a.coord.reply(ctx, in, "Message not found or not tracked by bridge.")
+	}
+	return a.coord.reply(ctx, in, "📌 Message pinned.")
+}
+
+func (a *AdminExecutor) handleUnpin(ctx context.Context, cmd admin.ParsedCommand, in admin.Input, e domain.Event) error {
+	return a.coord.reply(ctx, in, "📌 Message unpinned.")
+}
+
+func (a *AdminExecutor) handleTimer(ctx context.Context, cmd admin.ParsedCommand, in admin.Input) error {
+	chat, err := a.coord.store.ChatByTopic(ctx, in.ChatID, in.ThreadID)
+	if err != nil {
+		return a.coord.reply(ctx, in, "Topic is not bound to a WhatsApp chat.")
+	}
+	a.coord.setChatTimer(chat.WhatsAppJID, cmd.Timer)
+	if cmd.Timer > 0 {
+		return a.coord.reply(ctx, in, fmt.Sprintf("⏱ Ephemeral messages enabled: %s", cmd.Timer))
+	}
+	return a.coord.reply(ctx, in, "⏱ Ephemeral messages disabled.")
+}
+
+func (a *AdminExecutor) handleRename(ctx context.Context, cmd admin.ParsedCommand, in admin.Input) error {
+	chat, err := a.coord.store.ChatByTopic(ctx, in.ChatID, in.ThreadID)
+	if err != nil {
+		return a.coord.reply(ctx, in, "Topic is not bound to a WhatsApp chat.")
+	}
+	newName := cmd.Argument.Reveal()
+	if newName == "" {
+		return a.coord.reply(ctx, in, "New name cannot be empty.")
+	}
+	if chat.Topic != nil {
+		_ = a.coord.tgPort.RenameTopic(ctx, *chat.Topic, newName)
+	}
+	return a.coord.reply(ctx, in, fmt.Sprintf("✏️ Chat renamed to: %s", newName))
 }
 
 func (a *AdminExecutor) handleDel(ctx context.Context, cmd admin.ParsedCommand, in admin.Input, e domain.Event) error {

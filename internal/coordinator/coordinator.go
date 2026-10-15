@@ -3,6 +3,7 @@ package coordinator
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -11,6 +12,7 @@ import (
 	"github.com/darkydtm/whatsgram/internal/admin"
 	"github.com/darkydtm/whatsgram/internal/config"
 	"github.com/darkydtm/whatsgram/internal/domain"
+	"github.com/darkydtm/whatsgram/internal/store"
 )
 
 type Coordinator struct {
@@ -24,6 +26,7 @@ type Coordinator struct {
 	options     Options
 
 	sentWhatsAppIDs sync.Map
+	chatTimers      sync.Map
 	pendingCount    atomic.Int64
 	activeChatCount atomic.Int64
 }
@@ -149,6 +152,18 @@ func (c *Coordinator) Run(ctx context.Context) error {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+		if err := c.RunTimerLoop(runCtx); err != nil && !errors.Is(err, context.Canceled) {
+			select {
+			case errCh <- err:
+			default:
+			}
+			cancel()
+		}
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
 		c.runLeaseRecoveryLoop(runCtx)
 	}()
 
@@ -185,4 +200,84 @@ func (c *Coordinator) runLeaseRecoveryLoop(ctx context.Context) {
 			_ = c.store.RecoverExpiredLeases(ctx, time.Now())
 		}
 	}
+}
+
+func (c *Coordinator) setChatTimer(jid string, d time.Duration) {
+	c.chatTimers.Store(jid, d)
+}
+
+func (c *Coordinator) getChatTimer(jid string) (time.Duration, bool) {
+	val, ok := c.chatTimers.Load(jid)
+	if !ok {
+		return 0, false
+	}
+	d, ok := val.(time.Duration)
+	return d, ok
+}
+
+func (c *Coordinator) RunTimerLoop(ctx context.Context) error {
+	ticker := time.NewTicker(c.options.PollInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			for {
+				err := c.StepTimer(ctx)
+				if err != nil {
+					if errors.Is(err, store.ErrNoWork) || errors.Is(err, context.Canceled) {
+						break
+					}
+					break
+				}
+			}
+		}
+	}
+}
+
+func (c *Coordinator) StepTimer(ctx context.Context) error {
+	now := time.Now()
+	timer, err := c.store.ClaimTimer(ctx, now, c.options.LeaseDuration)
+	if err != nil {
+		return err
+	}
+
+	var deliveries []domain.Delivery
+	if timer.Kind == store.TimerExpire {
+		for _, part := range timer.Parts {
+			if part.Ref.Platform == domain.Telegram && !part.Deleted {
+				_ = c.tgPort.Delete(ctx, part.Ref)
+			}
+			if part.BridgeOwned && !part.Deleted && !part.Retired {
+				capability := domain.CanRevoke
+				if part.Ref.Platform == domain.Telegram {
+					capability = domain.CanDelete
+				}
+				if part.Capabilities&capability != 0 {
+					target := part.Ref
+					d := domain.Delivery{
+						OperationKey:    fmt.Sprintf("timer:revoke:%d:%s:%s", timer.ID, part.Ref.Platform, part.Ref.ID),
+						Platform:        part.Ref.Platform,
+						Kind:            "message.revoke",
+						MessageID:       timer.MessageID,
+						ChatID:          timer.ChatID,
+						TopicGeneration: part.TopicGeneration,
+						Target:          &target,
+						ExpectedVersion: timer.Version,
+					}
+					if part.Ref.Platform == domain.WhatsApp {
+						sendID := c.waPort.AllocateSendID()
+						c.recordBridgeSend(sendID)
+						d.WhatsAppSendID = sendID
+						d.EchoActor = part.Ref.Chat
+					}
+					deliveries = append(deliveries, d)
+				}
+			}
+		}
+	}
+
+	return c.store.CompleteTimer(ctx, timer.ID, timer.LeaseToken, deliveries, now)
 }

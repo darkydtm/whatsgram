@@ -348,7 +348,19 @@ func (c *Coordinator) handleTelegramEvent(ctx context.Context, e domain.Event, t
 		EchoActor:       chat.WhatsAppJID,
 	}
 
+	var timers []store.TimerSpec
+	if dur, ok := c.getChatTimer(chat.WhatsAppJID); ok && dur > 0 {
+		timers = append(timers, store.TimerSpec{
+			Kind:     store.TimerExpire,
+			Version:  e.Version,
+			Deadline: now.Add(dur),
+		})
+	}
+
 	c.pendingCount.Add(1)
+	if len(timers) > 0 {
+		return c.store.PlanEventWithTimers(ctx, e, token, []domain.Delivery{delivery}, timers, now)
+	}
 	return c.store.PlanEvent(ctx, e, token, []domain.Delivery{delivery}, now)
 }
 
@@ -374,6 +386,20 @@ func (c *Coordinator) handleWhatsAppEvent(ctx context.Context, e domain.Event, t
 	}
 
 	switch e.Kind {
+	case domain.ChatTitle:
+		if e.Text != nil && e.Text.Text != "" && chat.Topic != nil {
+			_ = c.tgPort.RenameTopic(ctx, *chat.Topic, e.Text.Text)
+		}
+		return c.store.CompleteInbox(ctx, e.InboxID, token, now)
+
+	case domain.ChatTimer:
+		if e.Text != nil && e.Text.Text != "" {
+			if dur, err := time.ParseDuration(e.Text.Text); err == nil {
+				c.setChatTimer(e.Chat, dur)
+			}
+		}
+		return c.store.CompleteInbox(ctx, e.InboxID, token, now)
+
 	case domain.MessageEdit:
 		if e.Target == nil {
 			return c.completeInbox(ctx, e, token, now)
@@ -553,7 +579,19 @@ func (c *Coordinator) handleWhatsAppEvent(ctx context.Context, e domain.Event, t
 			EchoActor:       chat.WhatsAppJID,
 		}
 
+		var timers []store.TimerSpec
+		if dur, ok := c.getChatTimer(chat.WhatsAppJID); ok && dur > 0 {
+			timers = append(timers, store.TimerSpec{
+				Kind:     store.TimerExpire,
+				Version:  e.Version,
+				Deadline: now.Add(dur),
+			})
+		}
+
 		c.pendingCount.Add(1)
+		if len(timers) > 0 {
+			return c.store.PlanEventWithTimers(ctx, e, token, []domain.Delivery{delivery}, timers, now)
+		}
 		return c.store.PlanEvent(ctx, e, token, []domain.Delivery{delivery}, now)
 	}
 }
@@ -712,6 +750,39 @@ func isWhatsAppFromMe(e domain.Event, phone string) bool {
 }
 
 func formatWhatsAppText(e domain.Event, isFromMe bool) *domain.TextContent {
+	if len(e.Metadata) > 0 && (e.Text == nil || e.Text.Text == "") {
+		var meta struct {
+			Type      string   `json:"type"`
+			Latitude  float64  `json:"latitude"`
+			Longitude float64  `json:"longitude"`
+			Title     string   `json:"title"`
+			Address   string   `json:"address"`
+			Name      string   `json:"name"`
+			Phone     string   `json:"phone"`
+			Question  string   `json:"question"`
+			Options   []string `json:"options"`
+		}
+		if json.Unmarshal(e.Metadata, &meta) == nil {
+			switch meta.Type {
+			case "location":
+				desc := fmt.Sprintf("📍 Location: %.6f, %.6f", meta.Latitude, meta.Longitude)
+				if meta.Title != "" {
+					desc += fmt.Sprintf(" (%s)", meta.Title)
+				}
+				e.Text = &domain.TextContent{Text: desc}
+			case "contact":
+				desc := fmt.Sprintf("👤 Contact: %s (%s)", meta.Name, meta.Phone)
+				e.Text = &domain.TextContent{Text: desc}
+			case "poll":
+				desc := fmt.Sprintf("📊 Poll: %s", meta.Question)
+				for _, opt := range meta.Options {
+					desc += fmt.Sprintf("\n• %s", opt)
+				}
+				e.Text = &domain.TextContent{Text: desc}
+			}
+		}
+	}
+
 	if e.Text == nil {
 		return nil
 	}
