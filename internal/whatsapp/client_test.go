@@ -39,6 +39,7 @@ func deviceFixture(t *testing.T, paired bool) *store.Device {
 type fakeNetwork struct {
 	*whatsmeow.Client
 	connected bool
+	loggedIn  bool
 	sends     int
 	to        types.JID
 	message   *waE2E.Message
@@ -49,7 +50,22 @@ type fakeNetwork struct {
 }
 
 func (f *fakeNetwork) IsConnected() bool { return f.connected }
-func (f *fakeNetwork) IsLoggedIn() bool  { return f.connected }
+func (f *fakeNetwork) IsLoggedIn() bool {
+	if f.loggedIn {
+		return true
+	}
+	if f.Client != nil && f.Client.Store != nil && f.Client.Store.ID != nil && !f.Client.Store.ID.IsEmpty() {
+		return f.connected
+	}
+	return false
+}
+func (f *fakeNetwork) ConnectContext(context.Context) error {
+	if f.err != nil {
+		return f.err
+	}
+	f.connected = true
+	return nil
+}
 func (f *fakeNetwork) GetJoinedGroups(context.Context) ([]*types.GroupInfo, error) {
 	if f.err != nil {
 		return nil, f.err

@@ -2,6 +2,7 @@ package whatsapp
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/darkydtm/whatsgram/internal/domain"
@@ -38,6 +39,11 @@ func (c *Client) BeginQR(ctx context.Context) (<-chan domain.PairingNotice, erro
 	if err != nil {
 		return nil, adapterError(domain.Transient, "not_connected")
 	}
+	if !c.network.IsConnected() {
+		if err := c.network.ConnectContext(privateContext(ctx)); err != nil && !errors.Is(err, whatsmeow.ErrAlreadyConnected) {
+			return nil, adapterError(domain.Transient, "not_connected")
+		}
+	}
 	out := make(chan domain.PairingNotice, 8)
 	go func() {
 		defer close(out)
@@ -72,6 +78,22 @@ func (c *Client) BeginPhoneCode(ctx context.Context, phone string) (domain.Pairi
 		return domain.PairingNotice{}, adapterError(domain.Permanent, "invalid_target")
 	}
 	c.mu.Unlock()
+
+	if !c.network.IsConnected() {
+		if err := c.network.ConnectContext(privateContext(ctx)); err != nil && !errors.Is(err, whatsmeow.ErrAlreadyConnected) {
+			return domain.PairingNotice{}, adapterError(domain.Transient, "not_connected")
+		}
+		for i := 0; i < 50 && !c.network.IsConnected(); i++ {
+			select {
+			case <-ctx.Done():
+				return domain.PairingNotice{}, ctx.Err()
+			case <-time.After(100 * time.Millisecond):
+			}
+		}
+		if !c.network.IsConnected() {
+			return domain.PairingNotice{}, adapterError(domain.Transient, "not_connected")
+		}
+	}
 
 	code, err := c.network.PairPhone(ctx, phone, true, whatsmeow.PairClientChrome, "Chrome (Linux)")
 	if err != nil {
