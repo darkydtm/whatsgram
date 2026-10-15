@@ -22,14 +22,12 @@ Retrieved with `go list -m -json ...@latest` and `go mod download -json ...@exac
 | go.mau.fi/whatsmeow | v0.0.0-20261014094007-f16f9ca30d6a | f16f9ca30d6ae7ff35de7a02d94c93d3ae959098 | 1.26.0 |
 | github.com/go-telegram/bot | v1.27.0 | 6215b5e99a68127014f19a5d58f86befd2946f45 | 1.18 |
 | modernc.org/sqlite | v1.60.1 | b122d0417c01508beb55158faedeb64a0c5bfd8a | 1.26.0 |
-| go.yaml.in/yaml/v3 | v3.0.5 | e16c7af9361b241fa02d91582fb59ce4954d8afc | 1.16 |
 
 Authoritative version metadata URLs:
 
 - https://proxy.golang.org/go.mau.fi/whatsmeow/@v/v0.0.0-20261014094007-f16f9ca30d6a.info
 - https://proxy.golang.org/github.com/go-telegram/bot/@v/v1.27.0.info
 - https://proxy.golang.org/modernc.org/sqlite/@v/v1.60.1.info
-- https://proxy.golang.org/go.yaml.in/yaml/v3/@v/v3.0.5.info
 
 Rationale: select available exact upstream revisions; the client explicitly supports Bot API 10.3 (README.md:9), matching the fetched official API changelog dated August 24, 2026. Require Go >=1.26.0 for this dependency set. No inference that an older toolchain can build it. Research ran on `/usr/bin/go`, reporting `go1.27.2-X:nodwarf5 linux/amd64`.
 

@@ -36,46 +36,46 @@ Whatsgram is a production-grade, bidirectional bridge connecting WhatsApp to Tel
 Copy the reference configuration file:
 
 ```bash
-cp config.example.yaml config.yaml
+cp .env.example .env
 ```
 
-Edit `config.yaml` to specify your Telegram credentials and authorized users:
+Edit `.env` to specify your Telegram credentials and authorized users:
 
-```yaml
-telegram:
-  token: "" # Keep empty if injecting via WHATSGRAM_TELEGRAM_TOKEN
-  chat_id: -1001234567890 # Replace with your forum supergroup ID
-  allowed_user_ids: [42] # Replace with your numeric Telegram user ID
-  endpoint: https://api.telegram.org
-  local_api: false
+```env
+# Telegram configuration
+WHATSGRAM_TELEGRAM_TOKEN="" # Keep empty if injecting via process environment
+WHATSGRAM_TELEGRAM_CHAT_ID=-1001234567890 # Replace with your forum supergroup ID
+WHATSGRAM_TELEGRAM_ALLOWED_USER_IDS="42" # Replace with your numeric Telegram user ID
+WHATSGRAM_TELEGRAM_ENDPOINT="https://api.telegram.org"
+WHATSGRAM_TELEGRAM_LOCAL_API=false
 
-whatsapp:
-  pairing_mode: qr
-  phone: ""
-  history_policy: none
+# WhatsApp configuration
+WHATSGRAM_WHATSAPP_PAIRING_MODE=qr
+WHATSGRAM_WHATSAPP_PHONE=""
+WHATSGRAM_WHATSAPP_HISTORY_POLICY=none
 
-database:
-  path: data/whatsgram.db
-  busy_timeout: 5s
+# Database configuration
+WHATSGRAM_DATABASE_PATH=data/whatsgram.db
+WHATSGRAM_DATABASE_BUSY_TIMEOUT=5s
 
-media:
-  temp_dir: ""
-  ffmpeg: ffmpeg
-  max_bytes: 52428800
-  max_duration: 10m
-  timeout: 2m
-  workers: 2
+# Media configuration
+WHATSGRAM_MEDIA_TEMP_DIR=""
+WHATSGRAM_MEDIA_FFMPEG=ffmpeg
+WHATSGRAM_MEDIA_MAX_BYTES=52428800
+WHATSGRAM_MEDIA_MAX_DURATION=10m
+WHATSGRAM_MEDIA_TIMEOUT=2m
+WHATSGRAM_MEDIA_WORKERS=2
 
-runtime:
-  queue_capacity: 256
-  operation_timeout: 30s
-  max_attempts: 5
-  retry_base: 1s
-  retry_max: 1m
-  shutdown_timeout: 15s
+# Runtime configuration
+WHATSGRAM_RUNTIME_QUEUE_CAPACITY=256
+WHATSGRAM_RUNTIME_OPERATION_TIMEOUT=30s
+WHATSGRAM_RUNTIME_MAX_ATTEMPTS=5
+WHATSGRAM_RUNTIME_RETRY_BASE=1s
+WHATSGRAM_RUNTIME_RETRY_MAX=1m
+WHATSGRAM_RUNTIME_SHUTDOWN_TIMEOUT=15s
 ```
 
-All configuration keys can be configured via environment variables with the `WHATSGRAM_` prefix (e.g. `WHATSGRAM_TELEGRAM_TOKEN`).
+Process environment variables override `.env` file values, which override built-in defaults.
 
 ---
 
@@ -91,8 +91,10 @@ CGO_ENABLED=0 go build -o whatsgram ./cmd/whatsgram
 
 # Run with token from environment
 export WHATSGRAM_TELEGRAM_TOKEN="123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ"
-./whatsgram -config config.yaml
+./whatsgram -env .env
 ```
+
+If `.env` is present in the working directory, running `./whatsgram` will automatically load it.
 
 ### Option B: Docker Container
 
@@ -168,25 +170,25 @@ The Telegram bot must be granted the following administrator privileges in the f
 
 Whatsgram supports both the standard Telegram Cloud Bot API and self-hosted `telegram-bot-api` instances:
 
-| Feature | Cloud API (`local_api: false`) | Local API (`local_api: true`) |
+| Feature | Cloud API (`WHATSGRAM_TELEGRAM_LOCAL_API=false`) | Local API (`WHATSGRAM_TELEGRAM_LOCAL_API=true`) |
 | --- | --- | --- |
 | **Endpoint** | `https://api.telegram.org` | `http://localhost:8081` (or private IP) |
 | **Max Download** | 20 MiB | 2000 MiB (2 GiB) |
 | **Max Upload** | 50 MiB | 2000 MiB (2 GiB) |
 | **Local I/O** | Network streaming | Fast direct filesystem transfer |
 
-To use a local Bot API server, set `local_api: true` and specify the HTTP URL in `endpoint`. HTTP endpoints are permitted only for `localhost`, `127.0.0.1`, and `[::1]` to preserve connection security.
+To use a local Bot API server, set `WHATSGRAM_TELEGRAM_LOCAL_API=true` and specify the HTTP URL in `WHATSGRAM_TELEGRAM_ENDPOINT`. HTTP endpoints are permitted only for `localhost`, `127.0.0.1`, and `[::1]` to preserve connection security.
 
 ---
 
 ## Command Reference & Access Control
 
-All commands require the sender to be an authorized operator listed in `allowed_user_ids`. Messages from unauthorized users or outside the configured supergroup are ignored.
+All commands require the sender to be an authorized operator listed in `WHATSGRAM_TELEGRAM_ALLOWED_USER_IDS`. Messages from unauthorized users or outside the configured supergroup are ignored.
 
 ### Access Control Model
 
-- **Operators**: Every user ID in `allowed_user_ids` can invoke management commands (`/help`, `/status`, `/sync`, `/pair`, etc.).
-- **Account Driver**: The smallest numeric user ID in `allowed_user_ids` is the designated account driver. Only the driver's emoji reactions and poll votes are propagated to WhatsApp.
+- **Operators**: Every user ID in `WHATSGRAM_TELEGRAM_ALLOWED_USER_IDS` can invoke management commands (`/help`, `/status`, `/sync`, `/pair`, etc.).
+- **Account Driver**: The smallest numeric user ID in `WHATSGRAM_TELEGRAM_ALLOWED_USER_IDS` is the designated account driver. Only the driver's emoji reactions and poll votes are propagated to WhatsApp.
 - **Original Author Mutation**: Edits and deletions require that the requesting Telegram operator is the original author of the message, unless an administrative override is active.
 
 ### Command List
@@ -249,7 +251,7 @@ Outbound messages follow a strict two-phase state machine:
 If a network timeout or connection reset occurs after `BeginSend` has dispatched the request, the result is classified as `Uncertain`. Automatic retries are suspended to prevent accidental duplicate message delivery. Operators can inspect uncertain deliveries using `/status` and reconcile them using `/bind message` or `/retry <op_id> confirm`.
 
 ### Automatic Lease Recovery
-If a worker crashes while processing a claimed inbox or outbox item, the lease expires after `runtime.operation_timeout`. A background recovery loop periodically checks for expired leases and returns them to `pending` status.
+If a worker crashes while processing a claimed inbox or outbox item, the lease expires after `WHATSGRAM_RUNTIME_OPERATION_TIMEOUT`. A background recovery loop periodically checks for expired leases and returns them to `pending` status.
 
 ---
 
