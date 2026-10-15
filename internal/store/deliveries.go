@@ -147,7 +147,7 @@ func (s *Store) BeginSend(ctx context.Context, id int64, token string, now time.
 		}
 		switch d.Kind {
 		case "message.edit":
-			if !owned || caps&domain.CanEditText == 0 {
+			if d.Platform == domain.WhatsApp && (!owned || caps&domain.CanEditText == 0) {
 				return ErrConflict
 			}
 		case "message.revoke":

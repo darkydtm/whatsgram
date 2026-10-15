@@ -46,6 +46,10 @@ type Store struct {
 	closeErr  error
 }
 
+func (s *Store) DB() *sql.DB {
+	return s.db
+}
+
 func Open(ctx context.Context, path string, busyTimeout time.Duration) (*Store, error) {
 	return OpenWithOptions(ctx, path, busyTimeout, DefaultOptions())
 }

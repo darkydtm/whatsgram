@@ -103,6 +103,21 @@ func (s *Store) QuarantineInbox(ctx context.Context, id int64, token string, now
 	}
 	return safe(tx.Commit())
 }
+
+func (s *Store) CompleteInbox(ctx context.Context, id int64, token string, now time.Time) error {
+	if now.IsZero() {
+		return ErrInvalid
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return safe(err)
+	}
+	defer tx.Rollback()
+	if err := changed(tx.ExecContext(ctx, "UPDATE bridge_inbox SET state='done',lease_token=NULL,lease_until_ms=NULL WHERE id=? AND state='leased' AND lease_token=? AND lease_until_ms>?", id, token, fenceTime(now).UnixMilli())); err != nil {
+		return err
+	}
+	return safe(tx.Commit())
+}
 func (s *Store) PlanEvent(ctx context.Context, e domain.Event, token string, deliveries []domain.Delivery, now time.Time) error {
 	return s.PlanEventWithTimers(ctx, e, token, deliveries, nil, now)
 }
@@ -245,7 +260,7 @@ func (s *Store) applySource(ctx context.Context, tx *sql.Tx, e domain.Event, del
 		if err := tx.QueryRowContext(ctx, "SELECT topic_generation FROM bridge_chat WHERE id=?", chatID).Scan(&generation); err != nil {
 			return 0, 0, false, safe(err)
 		}
-		result, err = tx.ExecContext(ctx, "INSERT INTO bridge_part(message_id,platform,remote_chat,remote_author,remote_id,part_index,role,is_bridge_owned,capabilities,topic_generation,deleted) VALUES (?,?,?,?,?,0,'primary',0,0,?,?)", messageID, e.Source, e.Target.Chat, e.Target.Author, e.Target.ID, generation, deleted)
+		result, err = tx.ExecContext(ctx, "INSERT INTO bridge_part(message_id,platform,remote_chat,remote_author,remote_id,part_index,role,is_bridge_owned,capabilities,topic_generation,deleted) VALUES (?,?,?,?,?,0,'primary',0,?,?,?)", messageID, e.Source, e.Target.Chat, e.Target.Author, e.Target.ID, domain.CanReact, generation, deleted)
 		if err != nil {
 			return 0, 0, false, safe(err)
 		}
@@ -261,19 +276,26 @@ func (s *Store) applySource(ctx context.Context, tx *sql.Tx, e domain.Event, del
 	if tombstone && e.Kind != domain.MessageRevoke {
 		return messageID, chatID, true, nil
 	}
-	if e.Kind != domain.MessageCreate && e.Kind != domain.MessageEdit && e.Kind != domain.MessageRevoke {
+	if e.Kind != domain.MessageCreate && e.Kind != domain.MessageEdit && e.Kind != domain.MessageRevoke && e.Kind != domain.ReactionSet {
 		return 0, 0, false, ErrInvalid
+	}
+	if e.Kind == domain.ReactionSet {
+		return messageID, chatID, false, nil
 	}
 	var version domain.SourceVersion
 	if err := json.Unmarshal(previous, &version); err != nil {
 		return 0, 0, false, ErrStorage
 	}
 	if e.Kind != domain.MessageRevoke {
-		order, err := e.Version.Compare(version)
-		if err != nil {
-			return 0, 0, false, err
-		}
-		if order <= 0 {
+		if e.Version.Kind == version.Kind {
+			order, err := e.Version.Compare(version)
+			if err != nil {
+				return 0, 0, false, err
+			}
+			if order <= 0 {
+				return messageID, chatID, true, nil
+			}
+		} else if e.Version.Order > 0 && version.Order > 0 && e.Version.Order <= version.Order {
 			return messageID, chatID, true, nil
 		}
 		var effective []byte
@@ -284,9 +306,13 @@ func (s *Store) applySource(ctx context.Context, tx *sql.Tx, e domain.Event, del
 		if err := json.Unmarshal(effective, &effectiveVersion); err != nil {
 			return 0, 0, false, ErrStorage
 		}
-		if order, err := e.Version.Compare(effectiveVersion); err != nil {
-			return 0, 0, false, err
-		} else if order <= 0 {
+		if e.Version.Kind == effectiveVersion.Kind {
+			if order, err := e.Version.Compare(effectiveVersion); err != nil {
+				return 0, 0, false, err
+			} else if order <= 0 {
+				return messageID, chatID, true, nil
+			}
+		} else if e.Version.Order > 0 && effectiveVersion.Order > 0 && e.Version.Order <= effectiveVersion.Order {
 			return messageID, chatID, true, nil
 		}
 	}

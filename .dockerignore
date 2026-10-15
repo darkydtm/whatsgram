@@ -1,0 +1,10 @@
+.git
+.github
+.gitignore
+.superpowers
+*.db
+*.db-wal
+*.db-shm
+data/
+tmp/
+whatsgram

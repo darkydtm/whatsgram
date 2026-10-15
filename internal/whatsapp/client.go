@@ -124,6 +124,12 @@ func validID(id string) bool {
 
 func (c *Client) AllocateSendID() string { return c.client.GenerateMessageID() }
 
+func (c *Client) IsPaired() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return !c.device.GetJID().IsEmpty() && !c.device.Deleted
+}
+
 func (c *Client) DiscoverChats(ctx context.Context) ([]domain.ChatCandidate, error) {
 	if ctx == nil {
 		return nil, adapterError(domain.Permanent, "invalid_target")

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"strings"
+	"time"
 
 	"github.com/darkydtm/whatsgram/internal/domain"
 	"go.mau.fi/whatsmeow/types"
@@ -137,4 +138,32 @@ func (s *Store) SetChatState(ctx context.Context, chatID, generation int64, stat
 		return ErrConflict
 	}
 	return nil
+}
+
+func (s *Store) SetChatTitle(ctx context.Context, waJID string, title string) error {
+	if len(title) == 0 || len(title) > 512 {
+		return ErrInvalid
+	}
+	result, err := s.db.ExecContext(ctx, "UPDATE bridge_chat SET title=? WHERE wa_jid=?", title, waJID)
+	if err != nil {
+		return safe(err)
+	}
+	return changed(result, nil)
+}
+
+func (s *Store) SetChatTimer(ctx context.Context, waJID string, d time.Duration) error {
+	_, err := s.db.ExecContext(ctx, "INSERT INTO bridge_cursor(stream,next_offset,epoch) VALUES (?,?,'timer') ON CONFLICT(stream) DO UPDATE SET next_offset=?", "timer:"+waJID, d.Milliseconds(), d.Milliseconds())
+	return safe(err)
+}
+
+func (s *Store) GetChatTimer(ctx context.Context, waJID string) (time.Duration, error) {
+	var ms int64
+	err := s.db.QueryRowContext(ctx, "SELECT next_offset FROM bridge_cursor WHERE stream=? AND epoch='timer'", "timer:"+waJID).Scan(&ms)
+	if err == sql.ErrNoRows {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, safe(err)
+	}
+	return time.Duration(ms) * time.Millisecond, nil
 }

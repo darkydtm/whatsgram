@@ -18,13 +18,17 @@ func acknowledgeSource(ctx context.Context, tx *sql.Tx, messageID int64, ref dom
 	if err := json.Unmarshal(payload, &observed); err != nil {
 		return ErrStorage
 	}
-	order, err := applied.Compare(observed)
-	if err != nil {
-		return err
-	}
-	if order > 0 {
+	if applied.Kind == observed.Kind {
+		order, err := applied.Compare(observed)
+		if err != nil {
+			return err
+		}
+		if order > 0 {
+			payload, _ = json.Marshal(applied)
+		}
+	} else if applied.Order > observed.Order {
 		payload, _ = json.Marshal(applied)
 	}
-	_, err = tx.ExecContext(ctx, "UPDATE bridge_source_state SET version=?,deleted=MAX(deleted,?) WHERE part_id=?", payload, deleted, partID)
+	_, err := tx.ExecContext(ctx, "UPDATE bridge_source_state SET version=?,deleted=MAX(deleted,?) WHERE part_id=?", payload, deleted, partID)
 	return safe(err)
 }

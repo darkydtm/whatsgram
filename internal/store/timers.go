@@ -25,6 +25,7 @@ type TimerSpec struct {
 type Timer struct {
 	ID         int64
 	MessageID  int64
+	ChatID     int64
 	Kind       TimerKind
 	Version    domain.SourceVersion
 	Deadline   time.Time
@@ -100,7 +101,7 @@ func (s *Store) ClaimTimer(ctx context.Context, now time.Time, ttl time.Duration
 	var timer Timer
 	var version []byte
 	var deadline int64
-	err = tx.QueryRowContext(ctx, `SELECT t.id,t.message_id,t.kind,t.target_version,t.deadline_ms FROM bridge_timer t WHERE t.state='pending' AND t.deadline_ms<=? AND NOT EXISTS (SELECT 1 FROM bridge_timer other WHERE other.message_id=t.message_id AND other.state='leased') ORDER BY t.deadline_ms,t.id LIMIT 1`, now.UnixMilli()).Scan(&timer.ID, &timer.MessageID, &timer.Kind, &version, &deadline)
+	err = tx.QueryRowContext(ctx, `SELECT t.id,t.message_id,m.chat_id,t.kind,t.target_version,t.deadline_ms FROM bridge_timer t JOIN bridge_message m ON m.id=t.message_id WHERE t.state='pending' AND t.deadline_ms<=? AND NOT EXISTS (SELECT 1 FROM bridge_timer other WHERE other.message_id=t.message_id AND other.state='leased') ORDER BY t.deadline_ms,t.id LIMIT 1`, now.UnixMilli()).Scan(&timer.ID, &timer.MessageID, &timer.ChatID, &timer.Kind, &version, &deadline)
 	if err == sql.ErrNoRows {
 		if err := tx.Commit(); err != nil {
 			return Timer{}, safe(err)
