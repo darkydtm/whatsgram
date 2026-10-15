@@ -26,6 +26,7 @@ type Client struct {
 	logger      *slog.Logger
 	mu          sync.RWMutex
 	botID       int64
+	botUsername string
 	ready       bool
 	parts       PartStore
 	admission   BatchStore
@@ -96,8 +97,14 @@ func (c *Client) Initialize(ctx context.Context) error {
 	if member == nil || member.Administrator == nil || member.Administrator.User.ID != me.ID || !member.Administrator.CanManageTopics || !member.Administrator.CanDeleteMessages {
 		return adapterError(domain.Permission, "permission_denied")
 	}
-	c.botID, c.ready = me.ID, true
+	c.botID, c.botUsername, c.ready = me.ID, me.Username, true
 	return nil
+}
+
+func (c *Client) BotUsername() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.botUsername
 }
 
 func (c *Client) identity() (int64, error) {
