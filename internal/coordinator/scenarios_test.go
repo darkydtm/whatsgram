@@ -1208,3 +1208,61 @@ func TestBidirectionalPhotoSynchronization(t *testing.T) {
 		t.Fatalf("expected caption 'Photo from TG', got %s", lastWAReq.Content.Text)
 	}
 }
+
+func TestTelegramToWhatsAppDeliveryRetriesWhileWhatsAppDisconnected(t *testing.T) {
+	coord, st, _, waPort, _ := setupTestEnvironment(t)
+	ctx := context.Background()
+
+	chatJID := "120363777@g.us"
+	waPort.groups = map[string]domain.GroupMeta{
+		chatJID: {JID: chatJID, Name: "Disconnect Test Group"},
+	}
+	topic, err := coord.EnsureTopic(ctx, chatJID, "Disconnect Test Group")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rawUpdate := fmt.Sprintf(`{"update_id":903,"message":{"message_id":555,"message_thread_id":%d,"date":1700000200,"from":{"id":42},"chat":{"id":%d},"text":"message while disconnected"}}`, topic.ThreadID, coord.cfg.Telegram.ChatID)
+	ev, err := telegram.Normalize(coord.cfg.Telegram, json.RawMessage(rawUpdate), "epoch1")
+	if err != nil {
+		t.Fatalf("Normalize failed: %v", err)
+	}
+	if _, err := st.Accept(ctx, ev); err != nil {
+		t.Fatalf("Accept failed: %v", err)
+	}
+	if err := coord.StepInbox(ctx); err != nil {
+		t.Fatalf("StepInbox failed: %v", err)
+	}
+
+	// Set retry base to 50ms for test
+	coord.cfg.Runtime.RetryBase = 50 * time.Millisecond
+
+	// Disconnect WhatsApp
+	waPort.mu.Lock()
+	waPort.disconnected = true
+	waPort.mu.Unlock()
+
+	// StepDelivery should fail gracefully with not_connected and keep delivery pending
+	err = coord.StepDelivery(ctx)
+	if err == nil {
+		t.Fatal("expected error from StepDelivery when WhatsApp is disconnected")
+	}
+
+	// Reconnect WhatsApp and advance time past retry delay
+	waPort.mu.Lock()
+	waPort.disconnected = false
+	waPort.mu.Unlock()
+
+	// After retry delay, StepDelivery should succeed
+	time.Sleep(80 * time.Millisecond)
+	if err := coord.StepDelivery(ctx); err != nil {
+		t.Fatalf("expected StepDelivery to succeed after reconnect, got: %v", err)
+	}
+
+	if len(waPort.sentRequests) != 1 {
+		t.Fatalf("expected 1 sent request on WhatsApp, got %d", len(waPort.sentRequests))
+	}
+	if waPort.sentRequests[0].Content.Text != "message while disconnected" {
+		t.Fatalf("expected text 'message while disconnected', got %q", waPort.sentRequests[0].Content.Text)
+	}
+}

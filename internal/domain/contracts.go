@@ -304,6 +304,7 @@ type TelegramPort interface {
 }
 type WhatsAppPort interface {
 	Run(context.Context, EventSink) error
+	IsConnected() bool
 	DiscoverChats(context.Context) ([]ChatCandidate, error)
 	AllocateSendID() string
 	SendText(context.Context, SendTextRequest) (SendResult, error)

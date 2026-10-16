@@ -49,6 +49,17 @@ func (c *Coordinator) StepDelivery(ctx context.Context) error {
 		return err
 	}
 
+	if delivery.Platform == domain.WhatsApp && !c.waPort.IsConnected() {
+		notConnErr := domain.AdapterError{
+			Class: domain.Transient,
+			Code:  "not_connected",
+		}
+		if failErr := c.handleDeliveryError(ctx, delivery, notConnErr, false, now); failErr != nil {
+			return failErr
+		}
+		return notConnErr
+	}
+
 	beginErr := c.store.BeginSend(ctx, delivery.ID, delivery.LeaseToken, now)
 	if beginErr != nil {
 		if failErr := c.handleDeliveryError(ctx, delivery, beginErr, false, now); failErr != nil {

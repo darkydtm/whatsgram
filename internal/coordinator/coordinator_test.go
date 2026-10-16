@@ -227,6 +227,7 @@ type fakeWhatsAppPort struct {
 	candidates      []domain.ChatCandidate
 	sentRequests    []domain.SendTextRequest
 	sendErr         error
+	disconnected    bool
 	editedMessages  []whatsAppEditCall
 	editErr         error
 	revokedMessages []whatsAppRevokeCall
@@ -242,6 +243,12 @@ type fakeWhatsAppPort struct {
 func (f *fakeWhatsAppPort) Run(ctx context.Context, sink domain.EventSink) error {
 	<-ctx.Done()
 	return ctx.Err()
+}
+
+func (f *fakeWhatsAppPort) IsConnected() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return !f.disconnected
 }
 
 func (f *fakeWhatsAppPort) DiscoverChats(ctx context.Context) ([]domain.ChatCandidate, error) {

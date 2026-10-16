@@ -140,6 +140,12 @@ func (c *Client) IsPaired() bool {
 	return !c.device.GetJID().IsEmpty() && !c.device.Deleted
 }
 
+func (c *Client) IsConnected() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.network != nil && c.network.IsConnected() && c.network.IsLoggedIn() && !c.device.GetJID().IsEmpty() && !c.device.Deleted && c.terminal == ""
+}
+
 func ContactName(info types.ContactInfo) string {
 	if info.FullName != "" {
 		return info.FullName
