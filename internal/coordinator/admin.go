@@ -139,6 +139,7 @@ func (a *AdminExecutor) handleSync(ctx context.Context, in admin.Input) error {
 		existingChat, err := a.coord.store.Chat(ctx, cand.WhatsAppJID)
 		if err == nil && existingChat.Topic != nil && existingChat.State == store.ChatActive {
 			existing++
+			_ = a.coord.UpdateMetaCard(ctx, cand.WhatsAppJID)
 			continue
 		}
 

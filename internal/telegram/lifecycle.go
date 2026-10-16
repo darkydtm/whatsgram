@@ -157,3 +157,33 @@ func (c *Client) RenameTopic(ctx context.Context, topic domain.TopicRef, name st
 	}
 	return classify(ctx, err, true)
 }
+
+func (c *Client) EditMetaMessage(ctx context.Context, topic domain.TopicRef, messageID int, isPhoto bool, content domain.TextContent) error {
+	if topic.ChatID == 0 || messageID <= 0 || content.Validate() != nil {
+		return adapterError(domain.Permanent, "invalid_target")
+	}
+	if err := c.Initialize(ctx); err != nil {
+		return err
+	}
+	if err := c.limiter.wait(ctx, false); err != nil {
+		return err
+	}
+	var err error
+	if isPhoto {
+		_, err = c.api.EditMessageCaption(ctx, &bot.EditMessageCaptionParams{
+			ChatID:          topic.ChatID,
+			MessageID:       messageID,
+			Caption:         content.Text,
+			CaptionEntities: toTelegramEntities(content.Entities),
+		})
+	} else {
+		_, err = c.api.EditMessageText(ctx, &bot.EditMessageTextParams{
+			ChatID:    topic.ChatID,
+			MessageID: messageID,
+			Text:      content.Text,
+			Entities:  toTelegramEntities(content.Entities),
+		})
+	}
+	c.limiter.recordError(err)
+	return classify(ctx, err, true)
+}

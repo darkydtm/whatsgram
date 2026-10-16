@@ -35,6 +35,8 @@ type Store interface {
 	SetChatTitle(ctx context.Context, waJID string, title string) error
 	SetChatTimer(ctx context.Context, waJID string, d time.Duration) error
 	GetChatTimer(ctx context.Context, waJID string) (time.Duration, error)
+	SetMetaMessageID(ctx context.Context, waJID string, msgID int, isPhoto bool) error
+	GetMetaMessageID(ctx context.Context, waJID string) (int, bool, error)
 }
 
 type Options struct {

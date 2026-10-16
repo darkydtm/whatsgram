@@ -5,12 +5,14 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"sort"
 	"time"
 
 	"github.com/darkydtm/whatsgram/internal/domain"
 	"go.mau.fi/whatsmeow/proto/waCommon"
 	"go.mau.fi/whatsmeow/proto/waE2E"
+	"go.mau.fi/whatsmeow/proto/waWeb"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 	"google.golang.org/protobuf/proto"
@@ -60,6 +62,12 @@ func (c *Client) NormalizeEvent(ctx context.Context, event any) ([]domain.Event,
 		return c.normalizeMessage(ctx, e)
 	case *events.HistorySync:
 		return c.normalizeHistorySync(ctx, e)
+	case *events.GroupInfo:
+		return c.normalizeGroupInfo(ctx, e)
+	case *events.CallOffer:
+		return c.normalizeCallOffer(ctx, e)
+	case *events.CallTerminate:
+		return c.normalizeCallTerminate(ctx, e)
 	default:
 		return nil, nil
 	}
@@ -112,6 +120,73 @@ func (c *Client) normalizeHistorySync(ctx context.Context, e *events.HistorySync
 		for _, hMsg := range messages {
 			if hMsg == nil || hMsg.GetMessage() == nil || c.network == nil {
 				continue
+			}
+			stubType := hMsg.GetMessage().GetMessageStubType()
+			if stubType != 0 {
+				stubText := ""
+				switch stubType {
+				case waWeb.WebMessageInfo_GROUP_PARTICIPANT_ADD:
+					stubText = "ℹ️ [Система] Участник присоединился к группе"
+				case waWeb.WebMessageInfo_GROUP_PARTICIPANT_REMOVE:
+					stubText = "ℹ️ [Система] Участник покинул группу"
+				case waWeb.WebMessageInfo_GROUP_PARTICIPANT_PROMOTE:
+					stubText = "ℹ️ [Система] Участник назначен администратором"
+				case waWeb.WebMessageInfo_GROUP_PARTICIPANT_DEMOTE:
+					stubText = "ℹ️ [Система] Участник больше не администратор"
+				case waWeb.WebMessageInfo_GROUP_CHANGE_SUBJECT:
+					stubText = "ℹ️ [Система] Название группы обновлено"
+				case waWeb.WebMessageInfo_GROUP_CHANGE_DESCRIPTION:
+					stubText = "ℹ️ [Система] Описание группы обновлено"
+				}
+				if stubText != "" {
+					ts := time.Unix(int64(hMsg.GetMessage().GetMessageTimestamp()), 0)
+					id := hMsg.GetMessage().GetKey().GetID()
+					sender := hMsg.GetMessage().GetKey().GetParticipant()
+					if sender == "" {
+						sender = chatJID.String()
+					}
+					digest := sha256.Sum256([]byte(stubText))
+					rawEnv, _ := json.Marshal(rawEnvelope{
+						ID:        id,
+						Chat:      chatJID.String(),
+						Sender:    sender,
+						Timestamp: ts.UnixMilli(),
+						Payload:   []byte(stubText),
+					})
+					ref := domain.MessageRef{
+						Platform: domain.WhatsApp,
+						Chat:     chatJID.String(),
+						Author:   sender,
+						ID:       id,
+						Device:   sender,
+					}
+					ev := domain.Event{
+						Key:        chatJID.String() + "/" + sender + "/" + id,
+						Source:     domain.WhatsApp,
+						Kind:       domain.MessageCreate,
+						Chat:       chatJID.String(),
+						Actor:      sender,
+						Target:     &ref,
+						OccurredAt: ts,
+						Raw:        rawEnv,
+						Text:       &domain.TextContent{Text: stubText},
+						Version: domain.SourceVersion{
+							Kind:   "wa.system",
+							Order:  ts.UnixMilli(),
+							Tie:    id,
+							Digest: hex.EncodeToString(digest[:]),
+						},
+					}
+					meta, _ := json.Marshal(eventMetadata{
+						Source:  "history-system",
+						RawChat: chatJID.String(),
+					})
+					ev.Metadata = meta
+					if ev.Validate() == nil {
+						allEvents = append(allEvents, ev)
+					}
+					continue
+				}
 			}
 			parsedMsg, err := c.network.ParseWebMessage(chatJID, hMsg.GetMessage())
 			if err != nil || parsedMsg == nil {
@@ -308,4 +383,249 @@ func (c *Client) targetFromKey(ctx context.Context, chat, actor types.JID, key *
 		return nil, err
 	}
 	return &domain.MessageRef{Platform: domain.WhatsApp, Chat: chat.String(), Author: canonical.String(), ID: key.GetID(), Device: sender.String()}, nil
+}
+
+func (c *Client) normalizeGroupInfo(ctx context.Context, e *events.GroupInfo) ([]domain.Event, error) {
+	if e == nil || e.JID.IsEmpty() {
+		return nil, nil
+	}
+	chatJID, err := c.canonical(ctx, e.JID)
+	if err != nil {
+		return nil, err
+	}
+	ts := e.Timestamp
+	if ts.IsZero() {
+		ts = time.Now().UTC()
+	}
+	actor := chatJID.String()
+	if e.Sender != nil && !e.Sender.IsEmpty() {
+		if a, err := c.canonical(ctx, *e.Sender); err == nil {
+			actor = a.String()
+		}
+	}
+
+	var messages []string
+	for _, j := range e.Join {
+		messages = append(messages, fmt.Sprintf("ℹ️ [Система] %s присоединился к группе", j.User))
+	}
+	for _, l := range e.Leave {
+		messages = append(messages, fmt.Sprintf("ℹ️ [Система] %s покинул группу", l.User))
+	}
+	for _, p := range e.Promote {
+		messages = append(messages, fmt.Sprintf("ℹ️ [Система] %s назначен администратором", p.User))
+	}
+	for _, d := range e.Demote {
+		messages = append(messages, fmt.Sprintf("ℹ️ [Система] %s больше не администратор", d.User))
+	}
+	if e.Name != nil && e.Name.Name != "" {
+		messages = append(messages, fmt.Sprintf("ℹ️ [Система] Название группы изменено на \"%s\"", e.Name.Name))
+	}
+	if e.Topic != nil && e.Topic.Topic != "" {
+		messages = append(messages, fmt.Sprintf("ℹ️ [Система] Тема группы изменена: %s", e.Topic.Topic))
+	}
+	if e.Announce != nil {
+		if e.Announce.IsAnnounce {
+			messages = append(messages, "ℹ️ [Система] Сообщения могут отправлять только администраторы")
+		} else {
+			messages = append(messages, "ℹ️ [Система] Все участники могут отправлять сообщения")
+		}
+	}
+
+	var events []domain.Event
+	for i, msgText := range messages {
+		id := fmt.Sprintf("sys-%d-%d", ts.UnixMilli(), i)
+		digest := sha256.Sum256([]byte(msgText))
+		rawEnv, _ := json.Marshal(rawEnvelope{
+			ID:        id,
+			Chat:      chatJID.String(),
+			Sender:    actor,
+			Timestamp: ts.UnixMilli(),
+			Payload:   []byte(msgText),
+		})
+		ref := domain.MessageRef{
+			Platform: domain.WhatsApp,
+			Chat:     chatJID.String(),
+			Author:   actor,
+			ID:       id,
+			Device:   actor,
+		}
+		ev := domain.Event{
+			Key:        chatJID.String() + "/" + actor + "/" + id,
+			Source:     domain.WhatsApp,
+			Kind:       domain.MessageCreate,
+			Chat:       chatJID.String(),
+			Actor:      actor,
+			Target:     &ref,
+			OccurredAt: ts,
+			Raw:        rawEnv,
+			Text:       &domain.TextContent{Text: msgText},
+			Version: domain.SourceVersion{
+				Kind:   "wa.system",
+				Order:  ts.UnixMilli() + int64(i),
+				Tie:    id,
+				Digest: hex.EncodeToString(digest[:]),
+			},
+		}
+		meta, _ := json.Marshal(eventMetadata{
+			Source:  "system",
+			RawChat: chatJID.String(),
+		})
+		ev.Metadata = meta
+		if ev.Validate() == nil {
+			events = append(events, ev)
+		}
+	}
+	return events, nil
+}
+
+func (c *Client) normalizeCallOffer(ctx context.Context, e *events.CallOffer) ([]domain.Event, error) {
+	if e == nil {
+		return nil, nil
+	}
+	caller := e.CallCreator
+	if caller.IsEmpty() {
+		caller = e.From
+	}
+	if caller.IsEmpty() {
+		return nil, nil
+	}
+	canonicalCaller, err := c.canonical(ctx, caller)
+	if err != nil {
+		return nil, err
+	}
+	chatJID := canonicalCaller
+	if !e.GroupJID.IsEmpty() {
+		if g, err := c.canonical(ctx, e.GroupJID); err == nil {
+			chatJID = g
+		}
+	}
+	ts := e.Timestamp
+	if ts.IsZero() {
+		ts = time.Now().UTC()
+	}
+	id := e.CallID
+	if id == "" {
+		id = fmt.Sprintf("call-%d", ts.UnixMilli())
+	}
+	text := fmt.Sprintf("📞 Входящий звонок от %s", canonicalCaller.User)
+	if !e.GroupJID.IsEmpty() {
+		text = fmt.Sprintf("📞 Групповой звонок от %s", canonicalCaller.User)
+	}
+	digest := sha256.Sum256([]byte(text))
+	rawEnv, _ := json.Marshal(rawEnvelope{
+		ID:        id,
+		Chat:      chatJID.String(),
+		Sender:    canonicalCaller.String(),
+		Timestamp: ts.UnixMilli(),
+		Payload:   []byte(text),
+	})
+	ref := domain.MessageRef{
+		Platform: domain.WhatsApp,
+		Chat:     chatJID.String(),
+		Author:   canonicalCaller.String(),
+		ID:       id,
+		Device:   canonicalCaller.String(),
+	}
+	ev := domain.Event{
+		Key:        chatJID.String() + "/" + canonicalCaller.String() + "/" + id,
+		Source:     domain.WhatsApp,
+		Kind:       domain.MessageCreate,
+		Chat:       chatJID.String(),
+		Actor:      canonicalCaller.String(),
+		Target:     &ref,
+		OccurredAt: ts,
+		Raw:        rawEnv,
+		Text:       &domain.TextContent{Text: text},
+		Version: domain.SourceVersion{
+			Kind:   "wa.call",
+			Order:  ts.UnixMilli(),
+			Tie:    id,
+			Digest: hex.EncodeToString(digest[:]),
+		},
+	}
+	meta, _ := json.Marshal(eventMetadata{
+		Source:  "call",
+		RawChat: chatJID.String(),
+	})
+	ev.Metadata = meta
+	if ev.Validate() == nil {
+		return []domain.Event{ev}, nil
+	}
+	return nil, nil
+}
+
+func (c *Client) normalizeCallTerminate(ctx context.Context, e *events.CallTerminate) ([]domain.Event, error) {
+	if e == nil {
+		return nil, nil
+	}
+	caller := e.CallCreator
+	if caller.IsEmpty() {
+		caller = e.From
+	}
+	if caller.IsEmpty() {
+		return nil, nil
+	}
+	canonicalCaller, err := c.canonical(ctx, caller)
+	if err != nil {
+		return nil, err
+	}
+	chatJID := canonicalCaller
+	if !e.GroupJID.IsEmpty() {
+		if g, err := c.canonical(ctx, e.GroupJID); err == nil {
+			chatJID = g
+		}
+	}
+	ts := e.Timestamp
+	if ts.IsZero() {
+		ts = time.Now().UTC()
+	}
+	id := e.CallID
+	if id == "" {
+		id = fmt.Sprintf("call-term-%d", ts.UnixMilli())
+	}
+	text := "📞 Звонок завершен"
+	if e.Reason != "" {
+		text = fmt.Sprintf("📞 Звонок завершен (%s)", e.Reason)
+	}
+	digest := sha256.Sum256([]byte(text))
+	rawEnv, _ := json.Marshal(rawEnvelope{
+		ID:        id,
+		Chat:      chatJID.String(),
+		Sender:    canonicalCaller.String(),
+		Timestamp: ts.UnixMilli(),
+		Payload:   []byte(text),
+	})
+	ref := domain.MessageRef{
+		Platform: domain.WhatsApp,
+		Chat:     chatJID.String(),
+		Author:   canonicalCaller.String(),
+		ID:       id,
+		Device:   canonicalCaller.String(),
+	}
+	ev := domain.Event{
+		Key:        chatJID.String() + "/" + canonicalCaller.String() + "/" + id,
+		Source:     domain.WhatsApp,
+		Kind:       domain.MessageCreate,
+		Chat:       chatJID.String(),
+		Actor:      canonicalCaller.String(),
+		Target:     &ref,
+		OccurredAt: ts,
+		Raw:        rawEnv,
+		Text:       &domain.TextContent{Text: text},
+		Version: domain.SourceVersion{
+			Kind:   "wa.call",
+			Order:  ts.UnixMilli(),
+			Tie:    id,
+			Digest: hex.EncodeToString(digest[:]),
+		},
+	}
+	meta, _ := json.Marshal(eventMetadata{
+		Source:  "call",
+		RawChat: chatJID.String(),
+	})
+	ev.Metadata = meta
+	if ev.Validate() == nil {
+		return []domain.Event{ev}, nil
+	}
+	return nil, nil
 }

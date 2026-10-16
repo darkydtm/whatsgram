@@ -167,3 +167,25 @@ func (s *Store) GetChatTimer(ctx context.Context, waJID string) (time.Duration, 
 	}
 	return time.Duration(ms) * time.Millisecond, nil
 }
+
+func (s *Store) SetMetaMessageID(ctx context.Context, waJID string, msgID int, isPhoto bool) error {
+	epoch := "text"
+	if isPhoto {
+		epoch = "photo"
+	}
+	_, err := s.db.ExecContext(ctx, "INSERT INTO bridge_cursor(stream,next_offset,epoch) VALUES (?,?,?) ON CONFLICT(stream) DO UPDATE SET next_offset=?, epoch=?", "meta:"+waJID, int64(msgID), epoch, int64(msgID), epoch)
+	return safe(err)
+}
+
+func (s *Store) GetMetaMessageID(ctx context.Context, waJID string) (int, bool, error) {
+	var msgID int64
+	var epoch string
+	err := s.db.QueryRowContext(ctx, "SELECT next_offset, epoch FROM bridge_cursor WHERE stream=?", "meta:"+waJID).Scan(&msgID, &epoch)
+	if err == sql.ErrNoRows {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, safe(err)
+	}
+	return int(msgID), epoch == "photo", nil
+}

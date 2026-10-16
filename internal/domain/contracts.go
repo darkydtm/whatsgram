@@ -300,6 +300,7 @@ type TelegramPort interface {
 	Delete(context.Context, MessageRef) error
 	SetOwnReaction(context.Context, MessageRef, string) error
 	DownloadFile(context.Context, string) ([]byte, error)
+	EditMetaMessage(context.Context, TopicRef, int, bool, TextContent) error
 }
 type WhatsAppPort interface {
 	Run(context.Context, EventSink) error

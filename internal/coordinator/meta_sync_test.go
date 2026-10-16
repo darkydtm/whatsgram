@@ -536,3 +536,58 @@ func TestHistorySyncMessageChronologicalDeliveryToTelegram(t *testing.T) {
 		t.Errorf("expected third sent message to be newest, got: %s", sentMessages[2])
 	}
 }
+
+func TestAutomaticMetaCardUpdateOnGroupChange(t *testing.T) {
+	coord, _, tgPort, waPort, _ := setupTestEnvironment(t)
+	ctx := context.Background()
+
+	chatJID := "120363777@g.us"
+	waPort.groups = map[string]domain.GroupMeta{
+		chatJID: {
+			JID:  chatJID,
+			Name: "Initial Group Name",
+			Participants: []domain.ContactMeta{
+				{JID: "15550000001@s.whatsapp.net", Name: "User One", Phone: "+15550000001"},
+			},
+		},
+	}
+	topic, err := coord.EnsureTopic(ctx, chatJID, "Initial Group Name")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify meta card sent initially
+	if len(tgPort.sentRequests) == 0 {
+		t.Fatal("expected initial meta card sent")
+	}
+
+	// Update group metadata
+	waPort.groups[chatJID] = domain.GroupMeta{
+		JID:  chatJID,
+		Name: "Updated Group Name",
+		Participants: []domain.ContactMeta{
+			{JID: "15550000001@s.whatsapp.net", Name: "User One", Phone: "+15550000001"},
+			{JID: "15550000002@s.whatsapp.net", Name: "User Two", Phone: "+15550000002"},
+		},
+	}
+
+	// Call UpdateMetaCard
+	if err := coord.UpdateMetaCard(ctx, chatJID); err != nil {
+		t.Fatalf("UpdateMetaCard failed: %v", err)
+	}
+
+	// Verify edit occurred
+	if len(tgPort.editedMetaMessages) != 1 {
+		t.Fatalf("expected 1 edited meta message, got %d", len(tgPort.editedMetaMessages))
+	}
+	editCall := tgPort.editedMetaMessages[0]
+	if editCall.Topic.ThreadID != topic.ThreadID {
+		t.Errorf("expected topic %d, got %d", topic.ThreadID, editCall.Topic.ThreadID)
+	}
+	if !strings.Contains(editCall.Content.Text, "Updated Group Name") {
+		t.Errorf("expected edited content to have 'Updated Group Name', got: %s", editCall.Content.Text)
+	}
+	if !strings.Contains(editCall.Content.Text, "User Two") {
+		t.Errorf("expected edited content to have 'User Two', got: %s", editCall.Content.Text)
+	}
+}

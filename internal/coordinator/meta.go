@@ -2,6 +2,7 @@ package coordinator
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"unicode/utf16"
 	"unicode/utf8"
@@ -82,7 +83,7 @@ func (c *Coordinator) EnsureTopic(ctx context.Context, waJID string, titleHint s
 	avatarBytes, _ := c.waPort.GetAvatar(ctx, waJID)
 	sent := false
 	if len(avatarBytes) > 0 && utf8.RuneCountInString(metaContent.Text) <= 1024 {
-		_, err := c.tgPort.SendPhoto(ctx, domain.SendPhotoRequest{
+		res, err := c.tgPort.SendPhoto(ctx, domain.SendPhotoRequest{
 			TelegramTopic: topicRef,
 			Caption:       metaContent.Text,
 			Entities:      metaContent.Entities,
@@ -91,16 +92,90 @@ func (c *Coordinator) EnsureTopic(ctx context.Context, waJID string, titleHint s
 		})
 		if err == nil {
 			sent = true
+			if len(res.Parts) > 0 {
+				idStr := strings.TrimPrefix(res.Parts[0].Ref.ID, "tg-msg-")
+				if id, err := strconv.Atoi(idStr); err == nil {
+					_ = c.store.SetMetaMessageID(ctx, waJID, id, true)
+				}
+			}
 		}
 	}
 	if !sent {
-		_, _ = c.tgPort.SendText(ctx, domain.SendTextRequest{
+		res, err := c.tgPort.SendText(ctx, domain.SendTextRequest{
 			TelegramTopic: topicRef,
 			Content:       metaContent,
 		})
+		if err == nil && len(res.Parts) > 0 {
+			idStr := strings.TrimPrefix(res.Parts[0].Ref.ID, "tg-msg-")
+			if id, err := strconv.Atoi(idStr); err == nil {
+				_ = c.store.SetMetaMessageID(ctx, waJID, id, false)
+			}
+		}
 	}
 
 	return topicRef, nil
+}
+
+func (c *Coordinator) UpdateMetaCard(ctx context.Context, waJID string) error {
+	if waJID == "" {
+		return domain.ErrInvalid
+	}
+	chat, err := c.store.Chat(ctx, waJID)
+	if err != nil || chat.Topic == nil || chat.State != store.ChatActive {
+		return nil
+	}
+
+	isGroup := strings.HasSuffix(waJID, "@g.us")
+	var metaContent domain.TextContent
+	if isGroup {
+		groupMeta, _ := c.waPort.GetGroupMeta(ctx, waJID)
+		metaContent = c.buildGroupMetaCard(ctx, waJID, groupMeta)
+	} else {
+		contactMeta, _ := c.waPort.GetContactMeta(ctx, waJID)
+		metaContent = c.buildContactMetaCard(ctx, waJID, contactMeta)
+	}
+
+	msgID, isPhoto, err := c.store.GetMetaMessageID(ctx, waJID)
+	if err == nil && msgID > 0 {
+		editErr := c.tgPort.EditMetaMessage(ctx, *chat.Topic, msgID, isPhoto, metaContent)
+		if editErr == nil {
+			return nil
+		}
+	}
+
+	avatarBytes, _ := c.waPort.GetAvatar(ctx, waJID)
+	sent := false
+	if len(avatarBytes) > 0 && utf8.RuneCountInString(metaContent.Text) <= 1024 {
+		res, err := c.tgPort.SendPhoto(ctx, domain.SendPhotoRequest{
+			TelegramTopic: *chat.Topic,
+			Caption:       metaContent.Text,
+			Entities:      metaContent.Entities,
+			FileName:      "avatar.jpg",
+			Data:          avatarBytes,
+		})
+		if err == nil {
+			sent = true
+			if len(res.Parts) > 0 {
+				idStr := strings.TrimPrefix(res.Parts[0].Ref.ID, "tg-msg-")
+				if id, err := strconv.Atoi(idStr); err == nil {
+					_ = c.store.SetMetaMessageID(ctx, waJID, id, true)
+				}
+			}
+		}
+	}
+	if !sent {
+		res, err := c.tgPort.SendText(ctx, domain.SendTextRequest{
+			TelegramTopic: *chat.Topic,
+			Content:       metaContent,
+		})
+		if err == nil && len(res.Parts) > 0 {
+			idStr := strings.TrimPrefix(res.Parts[0].Ref.ID, "tg-msg-")
+			if id, err := strconv.Atoi(idStr); err == nil {
+				_ = c.store.SetMetaMessageID(ctx, waJID, id, false)
+			}
+		}
+	}
+	return nil
 }
 
 func (c *Coordinator) buildContactMetaCard(ctx context.Context, waJID string, meta domain.ContactMeta) domain.TextContent {

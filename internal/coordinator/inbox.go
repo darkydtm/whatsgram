@@ -402,6 +402,7 @@ func (c *Coordinator) handleWhatsAppEvent(ctx context.Context, e domain.Event, t
 	case domain.ChatTitle:
 		if e.Text != nil && e.Text.Text != "" && chat.Topic != nil {
 			_ = c.tgPort.RenameTopic(ctx, *chat.Topic, e.Text.Text)
+			_ = c.UpdateMetaCard(ctx, e.Chat)
 		}
 		return c.store.CompleteInbox(ctx, e.InboxID, token, now)
 
@@ -542,6 +543,9 @@ func (c *Coordinator) handleWhatsAppEvent(ctx context.Context, e domain.Event, t
 		return c.store.PlanEvent(ctx, e, token, []domain.Delivery{delivery}, now)
 
 	default:
+		if strings.Contains(string(e.Metadata), "system") {
+			_ = c.UpdateMetaCard(ctx, e.Chat)
+		}
 		formatted := c.formatWhatsAppText(ctx, e, isFromMe)
 		if formatted == nil {
 			reason := "unsupported media"
@@ -820,6 +824,9 @@ func (c *Coordinator) formatWhatsAppText(ctx context.Context, e domain.Event, is
 
 	if e.Text == nil {
 		return nil
+	}
+	if strings.Contains(string(e.Metadata), "system") || strings.Contains(string(e.Metadata), "call") {
+		return e.Text
 	}
 	if isFromMe {
 		return prependText(e.Text, "You: ")

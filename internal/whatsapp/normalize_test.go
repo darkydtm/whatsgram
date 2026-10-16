@@ -3,6 +3,7 @@ package whatsapp
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -152,5 +153,64 @@ func TestNormalizeHistorySyncChronologicalOrder(t *testing.T) {
 		if ev.OccurredAt.Unix() != int64(expectedTimestamps[i]/1000) {
 			t.Errorf("at index %d: expected timestamp %d, got %d", i, expectedTimestamps[i]/1000, ev.OccurredAt.Unix())
 		}
+	}
+}
+
+func TestNormalizeSystemEvents(t *testing.T) {
+	c, err := New(context.Background(), deviceFixture(t, true), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	groupJID := types.NewJID("120001", types.GroupServer)
+	userJID := types.NewJID("15550000003", types.DefaultUserServer)
+
+	// 1. GroupInfo join & rename
+	grpEvt := &events.GroupInfo{
+		JID:  groupJID,
+		Join: []types.JID{userJID},
+		Name: &types.GroupName{Name: "New Group Title"},
+	}
+	evs, err := c.NormalizeEvent(context.Background(), grpEvt)
+	if err != nil {
+		t.Fatalf("NormalizeEvent GroupInfo failed: %v", err)
+	}
+	if len(evs) != 2 {
+		t.Fatalf("expected 2 system events, got %d", len(evs))
+	}
+	if !strings.Contains(evs[0].Text.Text, "присоединился") {
+		t.Errorf("expected join message, got %s", evs[0].Text.Text)
+	}
+	if !strings.Contains(evs[1].Text.Text, "New Group Title") {
+		t.Errorf("expected rename message, got %s", evs[1].Text.Text)
+	}
+
+	// 2. CallOffer & CallTerminate
+	callEvt := &events.CallOffer{
+		BasicCallMeta: types.BasicCallMeta{
+			From:   userJID,
+			CallID: "call-xyz-123",
+		},
+	}
+	callEvs, err := c.NormalizeEvent(context.Background(), callEvt)
+	if err != nil {
+		t.Fatalf("NormalizeEvent CallOffer failed: %v", err)
+	}
+	if len(callEvs) != 1 || !strings.Contains(callEvs[0].Text.Text, "Входящий звонок") {
+		t.Fatalf("expected incoming call event, got: %+v", callEvs)
+	}
+
+	termEvt := &events.CallTerminate{
+		BasicCallMeta: types.BasicCallMeta{
+			From:   userJID,
+			CallID: "call-xyz-123",
+		},
+		Reason: "timeout",
+	}
+	termEvs, err := c.NormalizeEvent(context.Background(), termEvt)
+	if err != nil {
+		t.Fatalf("NormalizeEvent CallTerminate failed: %v", err)
+	}
+	if len(termEvs) != 1 || !strings.Contains(termEvs[0].Text.Text, "Звонок завершен (timeout)") {
+		t.Fatalf("expected call terminate event, got: %+v", termEvs)
 	}
 }

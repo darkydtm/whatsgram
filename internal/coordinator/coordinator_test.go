@@ -44,6 +44,14 @@ type fakeTelegramPort struct {
 	deleteErr       error
 	reactions       []telegramReactionCall
 	reactionErr     error
+	editedMetaMessages []telegramMetaEditCall
+}
+
+type telegramMetaEditCall struct {
+	Topic     domain.TopicRef
+	MessageID int
+	IsPhoto   bool
+	Content   domain.TextContent
 }
 
 func (f *fakeTelegramPort) Run(ctx context.Context, sink domain.EventSink) error {
@@ -81,7 +89,7 @@ func (f *fakeTelegramPort) SendText(ctx context.Context, req domain.SendTextRequ
 			Platform: domain.Telegram,
 			Chat:     strconv.FormatInt(req.TelegramTopic.ChatID, 10),
 			Author:   strconv.FormatInt(req.TelegramTopic.ChatID, 10),
-			ID:       fmt.Sprintf("tg-msg-%d", f.nextMsgID),
+			ID:       strconv.FormatInt(f.nextMsgID, 10),
 		},
 		Index:           0,
 		Role:            domain.RolePrimary,
@@ -154,7 +162,7 @@ func (f *fakeTelegramPort) SendPhoto(ctx context.Context, req domain.SendPhotoRe
 			Platform: domain.Telegram,
 			Chat:     strconv.FormatInt(req.TelegramTopic.ChatID, 10),
 			Author:   strconv.FormatInt(req.TelegramTopic.ChatID, 10),
-			ID:       fmt.Sprintf("tg-msg-%d", f.nextMsgID),
+			ID:       strconv.FormatInt(f.nextMsgID, 10),
 		},
 		Index:           0,
 		Role:            domain.RolePrimary,
@@ -170,6 +178,21 @@ func (f *fakeTelegramPort) SendPhoto(ctx context.Context, req domain.SendPhotoRe
 
 func (f *fakeTelegramPort) DownloadFile(ctx context.Context, fileID string) ([]byte, error) {
 	return []byte("fake-file-bytes"), nil
+}
+
+func (f *fakeTelegramPort) EditMetaMessage(ctx context.Context, topic domain.TopicRef, messageID int, isPhoto bool, content domain.TextContent) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.editErr != nil {
+		return f.editErr
+	}
+	f.editedMetaMessages = append(f.editedMetaMessages, telegramMetaEditCall{
+		Topic:     topic,
+		MessageID: messageID,
+		IsPhoto:   isPhoto,
+		Content:   content,
+	})
+	return nil
 }
 
 func (f *fakeTelegramPort) LastSentPhoto() domain.SendPhotoRequest {
