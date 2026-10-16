@@ -84,6 +84,11 @@ func (c *Coordinator) handleTelegramEvent(ctx context.Context, e domain.Event, t
 	if threadID == 0 {
 		threadID = in.ThreadID
 	}
+	if threadID == 0 && in.ReplyMessageID > 0 {
+		if ch, err := c.store.ChatByTopic(ctx, chatID, in.ReplyMessageID); err == nil && ch.State == store.ChatActive {
+			threadID = in.ReplyMessageID
+		}
+	}
 
 	chat, err := c.store.ChatByTopic(ctx, chatID, threadID)
 	if err != nil || chat.State != store.ChatActive || chat.WhatsAppJID == "" {
@@ -684,16 +689,25 @@ func parseTelegramInput(e domain.Event) (admin.Input, string) {
 		}
 	}
 
-	if text == "" && len(e.Raw) > 0 {
+	if (text == "" || threadID == 0 || replyID == 0) && len(e.Raw) > 0 {
 		var update models.Update
 		if json.Unmarshal(e.Raw, &update) == nil && update.Message != nil {
-			if update.Message.Text != "" {
-				text = update.Message.Text
-			} else if update.Message.Caption != "" {
-				text = update.Message.Caption
+			if text == "" {
+				if update.Message.Text != "" {
+					text = update.Message.Text
+				} else if update.Message.Caption != "" {
+					text = update.Message.Caption
+				}
 			}
 			if threadID == 0 {
 				threadID = int64(update.Message.MessageThreadID)
+				if threadID == 0 && update.Message.ReplyToMessage != nil {
+					if update.Message.ReplyToMessage.MessageThreadID > 0 {
+						threadID = int64(update.Message.ReplyToMessage.MessageThreadID)
+					} else if update.Message.ReplyToMessage.ForumTopicCreated != nil || update.Message.ReplyToMessage.IsTopicMessage {
+						threadID = int64(update.Message.ReplyToMessage.ID)
+					}
+				}
 			}
 			if replyID == 0 && update.Message.ReplyToMessage != nil {
 				replyID = int64(update.Message.ReplyToMessage.ID)

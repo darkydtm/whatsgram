@@ -446,10 +446,10 @@ func buildText(chat types.JID, content domain.TextContent) (*waE2E.Message, erro
 	}
 	r := content.ReplyTo
 	if r.Platform != domain.WhatsApp || r.Chat != chat.String() {
-		return nil, adapterError(domain.Permanent, "invalid_target")
+		return &waE2E.Message{Conversation: proto.String(content.Text)}, nil
 	}
 	if _, err := parseChat(r.Author); err != nil {
-		return nil, err
+		return &waE2E.Message{Conversation: proto.String(content.Text)}, nil
 	}
 	return &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{Text: proto.String(content.Text), ContextInfo: &waE2E.ContextInfo{
 		StanzaID: proto.String(r.ID), Participant: proto.String(r.Author), RemoteJID: proto.String(r.Chat),

@@ -57,6 +57,16 @@ func Normalize(cfg config.Telegram, raw json.RawMessage, epoch string) (domain.E
 		meta.ThreadID = int64(message.MessageThreadID)
 		meta.MessageID = message.ID
 		e.TelegramThreadID = int64(message.MessageThreadID)
+		if e.TelegramThreadID == 0 && message.ReplyToMessage != nil {
+			if message.ReplyToMessage.MessageThreadID > 0 {
+				e.TelegramThreadID = int64(message.ReplyToMessage.MessageThreadID)
+			} else if message.ReplyToMessage.ForumTopicCreated != nil || message.ReplyToMessage.IsTopicMessage {
+				e.TelegramThreadID = int64(message.ReplyToMessage.ID)
+			}
+		}
+		if meta.ThreadID == 0 && e.TelegramThreadID > 0 {
+			meta.ThreadID = e.TelegramThreadID
+		}
 		e.Chat = strconv.FormatInt(message.Chat.ID, 10)
 		if message.From != nil && message.From.ID > 0 {
 			e.Actor = strconv.FormatInt(message.From.ID, 10)

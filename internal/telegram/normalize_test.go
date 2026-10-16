@@ -123,3 +123,14 @@ func TestNormalizePreservesTelegramThreadID(t *testing.T) {
 		t.Fatalf("expected TelegramThreadID 42, got %d", e.TelegramThreadID)
 	}
 }
+
+func TestNormalizeExtractsTelegramThreadIDFromReply(t *testing.T) {
+	raw := json.RawMessage(`{"update_id":102,"message":{"message_id":56,"date":100,"from":{"id":12},"chat":{"id":-10042},"text":"reply in topic","reply_to_message":{"message_id":42,"message_thread_id":42,"from":{"id":99},"chat":{"id":-10042}}}}`)
+	e, err := Normalize(testConfig("http://fixture"), raw, "epoch")
+	if err != nil {
+		t.Fatalf("Normalize failed: %v", err)
+	}
+	if e.TelegramThreadID != 42 {
+		t.Fatalf("expected TelegramThreadID 42, got %d", e.TelegramThreadID)
+	}
+}
